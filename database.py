@@ -9,7 +9,7 @@ import os
 import re
 import sqlite3
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Determine DB path (use /tmp on Vercel if running serverless, otherwise local gym.db)
 IS_VERCEL = bool(os.environ.get("VERCEL"))
@@ -26,18 +26,34 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 
 def get_db_connection():
     """Returns a connection to the SQLite database with row factory enabled."""
+    needs_init = not os.path.exists(DB_PATH)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
+    
+    if needs_init:
+        init_db_schema_and_seed(conn)
+    else:
+        # Check if tables exist
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        if not cursor.fetchone():
+            init_db_schema_and_seed(conn)
+            
     return conn
 
 
 def init_db(force_reseed=False):
-    """
-    Initializes database schema and populates seed data if empty.
-    Adheres to Week 4 (Requirements) and Week 7 (Data Resource Management).
-    """
-    conn = get_db_connection()
+    """Initializes database schema and populates seed data."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    init_db_schema_and_seed(conn, force_reseed=force_reseed)
+    conn.close()
+
+
+def init_db_schema_and_seed(conn, force_reseed=False):
+    """Internal helper to create schema and insert seed sessions."""
     cursor = conn.cursor()
 
     # Table 1: Training Sessions (UpcomingTrainingSessions from Week 7)
@@ -94,59 +110,34 @@ def init_db(force_reseed=False):
             cursor.execute("DELETE FROM sessions")
 
         today_str = datetime.now().strftime("%Y-%m-%d")
-        
-        # Test data matching Week 4 & Week 7 specifications
+        tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Rich schedule with multiple morning, afternoon, and evening slots.
+        # NOTE: Yoga is completely excluded as requested.
         seed_sessions = [
-            (
-                "SES-101",
-                "CrossFit Conditioning",
-                "Daniyar Bolat",
-                today_str,
-                "09:00",
-                12,
-                8,
-                "CrossFit"
-            ),
-            (
-                "SES-102",
-                "Morning Yoga & Mobility",
-                "Elena Kim",
-                today_str,
-                "11:00",
-                16,
-                14,
-                "Yoga"
-            ),
-            (
-                "SES-103",
-                "Boxing & Core Technique",
-                "Alexey Smirnov",
-                today_str,
-                "15:30",
-                10,
-                10,  # 10/10 -> FULL! For testing TC-01 overbooking rejection
-                "Boxing"
-            ),
-            (
-                "SES-104",
-                "Strength & Hypertrophy",
-                "Daniyar Bolat",
-                today_str,
-                "18:00",
-                8,
-                2,
-                "Strength"
-            ),
-            (
-                "SES-105",
-                "Pilates & Spine Health",
-                "Aruzhan Sadykova",
-                today_str,
-                "19:30",
-                15,
-                7,
-                "Pilates"
-            ),
+            # --- TODAY: MORNING SLOTS (08:30 - 11:30) ---
+            ("SES-101", "CrossFit Morning Blast", "Daniyar Bolat", today_str, "08:30", 12, 4, "CrossFit"),
+            ("SES-102", "Strength: Upper Body Focus", "Timur Aliyev", today_str, "09:30", 10, 3, "Strength"),
+            ("SES-103", "Boxing Fundamentals & Bagwork", "Alexey Smirnov", today_str, "10:30", 10, 2, "Boxing"),
+            ("SES-104", "Pilates Core & Flexibility", "Aruzhan Sadykova", today_str, "11:30", 15, 5, "Pilates"),
+
+            # --- TODAY: AFTERNOON SLOTS (13:00 - 17:00) ---
+            ("SES-105", "HIIT Cardio Extreme", "Daniyar Bolat", today_str, "13:00", 16, 6, "HIIT Cardio"),
+            ("SES-106", "Boxing Sparring & Technique", "Alexey Smirnov", today_str, "15:00", 8, 8, "Boxing"), # FULL (8/8) for TC-01 test!
+            ("SES-107", "CrossFit Conditioning Pro", "Daniyar Bolat", today_str, "16:30", 12, 5, "CrossFit"),
+
+            # --- TODAY: EVENING SLOTS (18:00 - 20:30) ---
+            ("SES-108", "Strength & Heavy Hypertrophy", "Timur Aliyev", today_str, "18:00", 10, 4, "Strength"),
+            ("SES-109", "Evening Boxing Fight Club", "Alexey Smirnov", today_str, "19:00", 12, 7, "Boxing"),
+            ("SES-110", "Pilates Spine Recovery", "Aruzhan Sadykova", today_str, "19:30", 15, 6, "Pilates"),
+            ("SES-111", "Night Owl CrossFit", "Daniyar Bolat", today_str, "20:30", 10, 1, "CrossFit"),
+
+            # --- TOMORROW: SLOTS ---
+            ("SES-112", "Morning HIIT Cardio", "Aruzhan Sadykova", tomorrow_str, "09:00", 16, 2, "HIIT Cardio"),
+            ("SES-113", "Strength: Deadlift & Squat", "Timur Aliyev", tomorrow_str, "11:00", 8, 1, "Strength"),
+            ("SES-114", "Boxing Tactical Drill", "Alexey Smirnov", tomorrow_str, "16:00", 10, 3, "Boxing"),
+            ("SES-115", "CrossFit Team Challenge", "Daniyar Bolat", tomorrow_str, "18:30", 14, 4, "CrossFit"),
+            ("SES-116", "Pilates Balance & Posture", "Aruzhan Sadykova", tomorrow_str, "20:00", 15, 3, "Pilates"),
         ]
 
         now_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -157,7 +148,7 @@ def init_db(force_reseed=False):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (*sess, now_timestamp))
 
-        # Add sample confirmed booking for SES-101
+        # Sample initial booking for testing
         cursor.execute("SELECT id FROM sessions WHERE session_code = 'SES-101'")
         s101 = cursor.fetchone()
         if s101:
@@ -168,8 +159,6 @@ def init_db(force_reseed=False):
             """, ("BK-10101", s101["id"], "Aidar Bekzhan", "+7 701 555 1234", "CONFIRMED", now_timestamp))
 
         conn.commit()
-
-    conn.close()
 
 
 def validate_session_code(code: str) -> bool:
@@ -416,7 +405,6 @@ def create_backup(trigger_type: str = "MANUAL"):
     backup_dest = os.path.join(BACKUP_DIR, backup_filename)
 
     try:
-        # Use SQLite backup API for a clean, consistent snapshot
         src_conn = sqlite3.connect(DB_PATH)
         dst_conn = sqlite3.connect(backup_dest)
         src_conn.backup(dst_conn)
@@ -426,7 +414,6 @@ def create_backup(trigger_type: str = "MANUAL"):
         file_size = os.path.getsize(backup_dest)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Record in backup log
         conn = get_db_connection()
         conn.execute("""
             INSERT INTO backup_logs (filename, file_path, size_bytes, created_at, trigger_type)

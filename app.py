@@ -11,15 +11,27 @@ from flask import Flask, jsonify, request, send_from_directory
 import database
 
 # Initialize Flask app
-# Static folder is set to 'public' for easy Vercel & local compatibility
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 
 app = Flask(__name__, static_folder=PUBLIC_DIR)
 START_TIME = time.time()
 
-# Ensure DB is initialized on app startup
-database.init_db()
+
+@app.before_request
+def ensure_db():
+    """Ensures database exists and is seeded on every request (crucial for Vercel serverless cold starts)."""
+    # Quick check & init
+    database.init_db()
+
+
+@app.after_request
+def add_cors(response):
+    """Allow cross-origin requests and disable aggressive caching for live data."""
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    return response
 
 
 # -------------------------------------------------------------
@@ -32,16 +44,21 @@ def index():
 
 @app.route("/<path:filename>")
 def serve_static(filename):
+    # Avoid capturing API routes if called without /api
+    if filename.startswith("api/") or filename in ["sessions", "book", "bookings", "checkin", "backup", "backups", "reset", "health"]:
+        return jsonify({"error": "Not Found"}), 404
+        
     if os.path.exists(os.path.join(PUBLIC_DIR, filename)):
         return send_from_directory(PUBLIC_DIR, filename)
     return send_from_directory(PUBLIC_DIR, "index.html")
 
 
 # -------------------------------------------------------------
-# REST API Endpoints (Client / Server Contract)
+# REST API Endpoints (Dual routes to support local and Vercel)
 # -------------------------------------------------------------
 
 @app.route("/api/sessions", methods=["GET"])
+@app.route("/sessions", methods=["GET"])
 def api_get_sessions():
     """
     FR-01: Show available training sessions with date, time, trainer,
@@ -56,6 +73,7 @@ def api_get_sessions():
 
 
 @app.route("/api/sessions", methods=["POST"])
+@app.route("/sessions", methods=["POST"])
 def api_create_session():
     """
     Enforces Week 7 Data Governance:
@@ -93,6 +111,7 @@ def api_create_session():
 
 
 @app.route("/api/book", methods=["POST"])
+@app.route("/book", methods=["POST"])
 def api_book_session():
     """
     FR-02 & FR-03:
@@ -130,6 +149,7 @@ def api_book_session():
 
 
 @app.route("/api/bookings", methods=["GET"])
+@app.route("/bookings", methods=["GET"])
 def api_get_bookings():
     """
     Staff / Reception desk endpoint: retrieves all registered bookings.
@@ -143,6 +163,7 @@ def api_get_bookings():
 
 
 @app.route("/api/checkin", methods=["POST"])
+@app.route("/checkin", methods=["POST"])
 def api_checkin():
     """
     Week 5 Hardware integration: Receptionist scans QR code or enters booking number.
@@ -166,6 +187,7 @@ def api_checkin():
 
 
 @app.route("/api/backup", methods=["POST"])
+@app.route("/backup", methods=["POST"])
 def api_trigger_backup():
     """
     Week 6 Team Security Choice: Automatic Data Backup.
@@ -186,6 +208,7 @@ def api_trigger_backup():
 
 
 @app.route("/api/backups", methods=["GET"])
+@app.route("/backups", methods=["GET"])
 def api_list_backups():
     """Returns list of backups and audit log."""
     logs = database.get_backups()
@@ -197,6 +220,7 @@ def api_list_backups():
 
 
 @app.route("/api/reset", methods=["POST"])
+@app.route("/reset", methods=["POST"])
 def api_reset_db():
     """
     Convenience endpoint for live classroom demonstrations.
@@ -210,16 +234,15 @@ def api_reset_db():
 
 
 @app.route("/api/health", methods=["GET"])
+@app.route("/health", methods=["GET"])
 def api_health():
     """
     Week 10 Telecommunications and Networks diagnostic endpoint.
     Reports server health, uptime, client remote IP, and database latency.
     """
     t0 = time.time()
-    # Test DB roundtrip
     _ = database.get_all_sessions()
     db_latency_ms = round((time.time() - t0) * 1000, 2)
-
     uptime_sec = round(time.time() - START_TIME, 1)
 
     return jsonify({

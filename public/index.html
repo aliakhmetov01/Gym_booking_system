@@ -111,37 +111,52 @@
         </div>
         <div class="relative z-10 max-w-2xl">
           <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 mb-3">
-            Core Process Demonstration &bull; Week 15
+            Available Workout Times &bull; Week 15 Demo
           </div>
-          <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight">Available Training Sessions</h2>
+          <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight">Available Training Sessions & Times</h2>
           <p class="mt-2 text-slate-300 text-sm leading-relaxed">
-            Select a session and confirm your spot. The system checks <span class="font-mono text-emerald-300">Capacity &minus; BookedCount</span> in real time. If places are full, overbooking is rejected automatically (Business Rule FR-03).
+            Select a convenient time slot and book your place instantly. The system calculates <span class="font-mono text-emerald-300">Capacity &minus; BookedCount</span> in real time. If full, overbooking is rejected automatically (FR-03).
           </p>
         </div>
         <div class="mt-6 pt-6 border-t border-slate-700/60 flex flex-wrap gap-6 text-xs text-slate-300">
           <div><span class="text-slate-400">Target Stakeholder:</span> <strong class="text-white">Gym Member</strong></div>
-          <div><span class="text-slate-400">Overbooking Test:</span> <strong class="text-emerald-400">SES-103 is 10/10 Full</strong> (Try to book it!)</div>
-          <div><span class="text-slate-400">Transaction:</span> <strong class="text-white">SQLite Atomic Lock</strong></div>
+          <div><span class="text-slate-400">Overbooking Test:</span> <strong class="text-emerald-400">SES-106 (15:00 Boxing) is 8/8 Full</strong></div>
+          <div><span class="text-slate-400">Times Available:</span> <strong class="text-white">Morning, Afternoon & Evening</strong></div>
         </div>
       </div>
 
       <!-- FILTER & ACTIONS -->
       <div class="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <div class="flex items-center gap-3">
-          <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Category:</label>
-          <select id="filter-category" onchange="renderSessions()" class="text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 outline-none">
-            <option value="ALL">All Categories</option>
-            <option value="CrossFit">CrossFit</option>
-            <option value="Yoga">Yoga</option>
-            <option value="Boxing">Boxing</option>
-            <option value="Strength">Strength</option>
-            <option value="Pilates">Pilates</option>
-          </select>
+        <div class="flex flex-wrap items-center gap-3">
+          <!-- CATEGORY FILTER (No Yoga) -->
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Category:</label>
+            <select id="filter-category" onchange="renderSessions()" class="text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 outline-none">
+              <option value="ALL">All Categories</option>
+              <option value="CrossFit">CrossFit</option>
+              <option value="Boxing">Boxing</option>
+              <option value="Strength">Strength</option>
+              <option value="Pilates">Pilates</option>
+              <option value="HIIT Cardio">HIIT Cardio</option>
+            </select>
+          </div>
+
+          <!-- TIME OF DAY FILTER -->
+          <div class="flex items-center gap-2">
+            <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Time:</label>
+            <select id="filter-time" onchange="renderSessions()" class="text-sm border border-slate-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 outline-none">
+              <option value="ALL">All Times</option>
+              <option value="MORNING">Morning (08:00 - 12:00)</option>
+              <option value="AFTERNOON">Afternoon (12:00 - 17:00)</option>
+              <option value="EVENING">Evening (17:00 - 21:00)</option>
+            </select>
+          </div>
         </div>
+
         <div class="flex items-center gap-2">
           <button onclick="fetchSessions()" class="text-xs font-medium text-slate-600 hover:text-emerald-600 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-emerald-300 transition">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-            Refresh List
+            Refresh Schedule
           </button>
           <button onclick="resetDatabaseDemo()" class="text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-3 py-1.5 rounded-lg transition">
             Reset Demo Data
@@ -182,7 +197,7 @@
           </form>
         </div>
 
-        <!-- HARDWARE RESILIENCE BANNER (From Week 5 doc) -->
+        <!-- HARDWARE RESILIENCE BANNER -->
         <div class="mt-4 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
           <div class="flex items-center gap-2">
             <span class="font-semibold text-slate-700">Hardware Plan B (Resilience):</span>
@@ -230,7 +245,7 @@
               <input 
                 type="text" 
                 id="new-session-code" 
-                placeholder="SES-106" 
+                placeholder="SES-117" 
                 oninput="validateSessionCodeUI(this.value)"
                 required 
                 class="w-full text-sm font-mono uppercase px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
@@ -254,7 +269,7 @@
                 <input type="date" id="new-session-date" required class="w-full text-sm px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
               </div>
               <div>
-                <label class="block font-semibold text-slate-700 mb-1">Time</label>
+                <label class="block font-semibold text-slate-700 mb-1">Time Slot</label>
                 <input type="time" id="new-session-time" value="18:00" required class="w-full text-sm px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
               </div>
             </div>
@@ -268,10 +283,10 @@
                 <label class="block font-semibold text-slate-700 mb-1">Category</label>
                 <select id="new-session-category" class="w-full text-sm px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none">
                   <option value="CrossFit">CrossFit</option>
-                  <option value="Yoga">Yoga</option>
                   <option value="Boxing">Boxing</option>
                   <option value="Strength">Strength</option>
                   <option value="Pilates">Pilates</option>
+                  <option value="HIIT Cardio">HIIT Cardio</option>
                 </select>
               </div>
             </div>
@@ -282,7 +297,7 @@
           </form>
         </div>
 
-        <!-- DATA QUALITY AUDIT (Week 7 Step 4 Quality Dimensions) -->
+        <!-- DATA QUALITY AUDIT -->
         <div class="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-5">
           <div>
             <h2 class="text-xl font-bold text-slate-900">Data Quality Audit & Rules</h2>
@@ -470,7 +485,7 @@
           </div>
         </div>
 
-        <!-- FAILURE SCENARIO (Week 10 slide 55 requirement) -->
+        <!-- FAILURE SCENARIO -->
         <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-xs">
           <h4 class="font-bold text-rose-900 mb-1">Expected Failure Analysis: What happens if network / database connection drops?</h4>
           <p class="text-rose-800 leading-relaxed">
@@ -498,6 +513,15 @@
 
       <form onsubmit="submitBooking(event)" class="space-y-4 text-xs">
         <input type="hidden" id="modal-session-id">
+
+        <!-- Selected Time Slot Highlight -->
+        <div class="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            <span class="font-semibold text-xs" id="modal-time-slot">Selected Time</span>
+          </div>
+          <span id="modal-places-badge" class="text-[11px] font-bold text-emerald-700 bg-white px-2 py-0.5 rounded shadow-xs">-- places left</span>
+        </div>
 
         <div>
           <label class="block font-semibold text-slate-700 mb-1">Member Full Name</label>
@@ -558,7 +582,7 @@
           <span id="ticket-session" class="font-medium text-slate-800">--</span>
         </div>
         <div class="flex justify-between">
-          <span class="text-slate-500">Date & Time:</span>
+          <span class="text-slate-500">Time Slot:</span>
           <span id="ticket-datetime" class="font-medium text-slate-800">--</span>
         </div>
       </div>
@@ -585,7 +609,6 @@
       checkHealth();
       setInterval(checkHealth, 10000); // Poll health every 10s for live telemetry
       
-      // Default date to today for admin form
       const today = new Date().toISOString().split('T')[0];
       const dateInput = document.getElementById('new-session-date');
       if (dateInput) dateInput.value = today;
@@ -628,10 +651,25 @@
       setTimeout(() => toast.classList.add('hidden'), 4500);
     }
 
+    // Helper: Call API with dual-route fallback
+    async function apiRequest(endpoint, options = {}) {
+      try {
+        let res = await fetch('/api' + endpoint, options);
+        if (res.status === 404) {
+          // Fallback to route without /api
+          res = await fetch(endpoint, options);
+        }
+        return res;
+      } catch (err) {
+        // Retry without /api prefix
+        return await fetch(endpoint, options);
+      }
+    }
+
     // Fetch and render sessions (FR-01)
     async function fetchSessions() {
       try {
-        const res = await fetch('/api/sessions');
+        const res = await apiRequest('/sessions');
         const json = await res.json();
         if (json.status === 'success') {
           currentSessions = json.data;
@@ -639,24 +677,49 @@
         }
       } catch (err) {
         console.error("Fetch sessions error:", err);
-        showToast("Network error: Could not reach Flask server", true);
+        showToast("Network error: Could not reach backend server", true);
       }
     }
 
     function renderSessions() {
       const container = document.getElementById('sessions-grid');
       const cat = document.getElementById('filter-category').value;
+      const timeFilter = document.getElementById('filter-time').value;
 
-      const filtered = currentSessions.filter(s => cat === 'ALL' || s.category === cat);
+      const filtered = currentSessions.filter(s => {
+        // Exclude Yoga unconditionally
+        if (s.category && s.category.toLowerCase().includes('yoga')) return false;
+
+        const matchCat = (cat === 'ALL' || s.category === cat);
+        if (!matchCat) return false;
+
+        if (timeFilter === 'ALL') return true;
+
+        const hour = parseInt(s.session_time.split(':')[0], 10);
+        if (timeFilter === 'MORNING') return hour < 12;
+        if (timeFilter === 'AFTERNOON') return hour >= 12 && hour < 17;
+        if (timeFilter === 'EVENING') return hour >= 17;
+
+        return true;
+      });
 
       if (filtered.length === 0) {
-        container.innerHTML = `<div class="col-span-full text-center py-12 text-slate-400">No training sessions found for this category.</div>`;
+        container.innerHTML = `
+          <div class="col-span-full text-center py-12 bg-white rounded-2xl border border-slate-200">
+            <p class="text-slate-500 font-medium">No training sessions found for the selected filter.</p>
+            <p class="text-xs text-slate-400 mt-1">Try switching Category to "All Categories" or Time to "All Times".</p>
+          </div>
+        `;
         return;
       }
 
       container.innerHTML = filtered.map(s => {
         const isFull = s.free_places <= 0;
         const percent = Math.min(100, Math.round((s.booked_count / s.capacity) * 100));
+
+        // Time slot badge label
+        const hour = parseInt(s.session_time.split(':')[0], 10);
+        const slotLabel = hour < 12 ? '🌅 Morning' : hour < 17 ? '☀️ Afternoon' : '🌙 Evening';
 
         return `
           <div class="bg-white rounded-2xl border border-slate-200 hover:border-emerald-300 p-5 shadow-sm transition-all hover:shadow-md flex flex-col justify-between">
@@ -665,9 +728,14 @@
                 <span class="px-2 py-0.5 rounded font-mono text-xs font-bold ${isFull ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}">
                   ${s.session_code}
                 </span>
-                <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                  ${s.category}
-                </span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[10px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                    ${slotLabel}
+                  </span>
+                  <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    ${s.category}
+                  </span>
+                </div>
               </div>
 
               <h3 class="text-base font-bold text-slate-900">${s.title}</h3>
@@ -676,14 +744,21 @@
                 Trainer: <strong class="text-slate-700">${s.trainer}</strong>
               </p>
 
-              <div class="mt-4 grid grid-cols-2 gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                <div>
-                  <span class="text-slate-400 block text-[10px] uppercase font-semibold">Date</span>
-                  <span class="font-medium text-slate-700">${s.session_date}</span>
+              <!-- PROMINENT TIME & DATE CARD -->
+              <div class="mt-4 grid grid-cols-2 gap-2 text-xs bg-emerald-50/50 p-2.5 rounded-xl border border-emerald-100">
+                <div class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                  <div>
+                    <span class="text-slate-400 block text-[9px] uppercase font-semibold">Date</span>
+                    <span class="font-bold text-slate-800 text-[11px]">${s.session_date}</span>
+                  </div>
                 </div>
-                <div>
-                  <span class="text-slate-400 block text-[10px] uppercase font-semibold">Time</span>
-                  <span class="font-medium text-slate-700">${s.session_time}</span>
+                <div class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                  <div>
+                    <span class="text-slate-400 block text-[9px] uppercase font-semibold">Time Slot</span>
+                    <span class="font-extrabold text-emerald-800 text-xs">${s.session_time}</span>
+                  </div>
                 </div>
               </div>
 
@@ -708,8 +783,9 @@
                   Test Overbooking (FR-03)
                 </button>
               ` : `
-                <button onclick="openBookingModal(${s.id})" class="w-full py-2.5 px-4 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm hover:shadow-md">
-                  Book Spot
+                <button onclick="openBookingModal(${s.id})" class="w-full py-2.5 px-4 text-xs font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm hover:shadow-md flex items-center justify-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                  Book for ${s.session_time}
                 </button>
               `}
             </div>
@@ -724,7 +800,9 @@
       document.getElementById('modal-session-id').value = s.id;
       document.getElementById('modal-session-code').innerText = s.session_code;
       document.getElementById('modal-session-title').innerText = s.title;
-      document.getElementById('modal-session-details').innerText = `${s.session_date} at ${s.session_time} • Trainer: ${s.trainer} (${s.free_places} places left)`;
+      document.getElementById('modal-session-details').innerText = `Trainer: ${s.trainer} • Category: ${s.category}`;
+      document.getElementById('modal-time-slot').innerText = `${s.session_date} at ${s.session_time}`;
+      document.getElementById('modal-places-badge').innerText = `${s.free_places} places left`;
       document.getElementById('booking-modal').classList.remove('hidden');
     }
 
@@ -740,7 +818,7 @@
       const memberPhone = document.getElementById('modal-member-phone').value;
 
       try {
-        const res = await fetch('/api/book', {
+        const res = await apiRequest('/book', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -802,7 +880,7 @@
     // Receptionist Functions (Week 5)
     async function fetchBookings() {
       try {
-        const res = await fetch('/api/bookings');
+        const res = await apiRequest('/bookings');
         const json = await res.json();
         if (json.status === 'success') {
           renderBookings(json.data);
@@ -861,7 +939,7 @@
       e.preventDefault();
       const code = document.getElementById('checkin-code-input').value;
       try {
-        const res = await fetch('/api/checkin', {
+        const res = await apiRequest('/checkin', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ booking_code: code })
@@ -896,7 +974,7 @@
         feedback.innerText = "✓ Valid Format (Compliant with Week 7 Data Dictionary)";
         feedback.className = "mt-1 text-[11px] text-emerald-600 font-semibold";
       } else {
-        feedback.innerText = "✗ Invalid Format! Must match SES-### (e.g. SES-106).";
+        feedback.innerText = "✗ Invalid Format! Must match SES-### (e.g. SES-117).";
         feedback.className = "mt-1 text-[11px] text-rose-600 font-semibold";
       }
     }
@@ -914,7 +992,7 @@
       };
 
       try {
-        const res = await fetch('/api/sessions', {
+        const res = await apiRequest('/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -937,7 +1015,7 @@
     async function triggerBackup() {
       showToast("Creating physical SQLite snapshot...");
       try {
-        const res = await fetch('/api/backup', {
+        const res = await apiRequest('/backup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ trigger: "ADMIN_CONSOLE" })
@@ -956,7 +1034,7 @@
 
     async function fetchBackups() {
       try {
-        const res = await fetch('/api/backups');
+        const res = await apiRequest('/backups');
         const json = await res.json();
         if (json.status === 'success') {
           renderBackups(json.data);
@@ -996,7 +1074,7 @@
 
       const t0 = performance.now();
       try {
-        const res = await fetch('/api/health');
+        const res = await apiRequest('/health');
         const t1 = performance.now();
         const rtt = Math.round(t1 - t0);
 
@@ -1026,7 +1104,7 @@
     async function resetDatabaseDemo() {
       if (!confirm("Reset database to initial test state?")) return;
       try {
-        const res = await fetch('/api/reset', { method: 'POST' });
+        const res = await apiRequest('/reset', { method: 'POST' });
         const data = await res.json();
         showToast(data.message);
         fetchSessions();
