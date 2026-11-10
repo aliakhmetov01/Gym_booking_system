@@ -20,3 +20,5 @@ Thumbs.db
 
 # Backups snapshots (keep .gitkeep if any)
 backups/*.db
+backups/*.json
+gym_store.json
