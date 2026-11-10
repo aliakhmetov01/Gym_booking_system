@@ -54,10 +54,10 @@
           </button>
         </nav>
 
-        <!-- Minimal Status Indicator -->
-        <div id="connection-pill" class="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+        <!-- Status Pill -->
+        <div id="connection-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-100 text-zinc-600 border border-zinc-200">
           <span id="conn-dot" class="w-2 h-2 rounded-full bg-zinc-400"></span>
-          <span id="conn-status">Checking...</span>
+          <span id="conn-status">API &amp; DB Checking...</span>
         </div>
       </div>
     </div>
@@ -851,6 +851,7 @@
     }
 
     async function checkHealth() {
+      const pill = document.getElementById('connection-pill');
       const dot = document.getElementById('conn-dot');
       const connText = document.getElementById('conn-status');
       const latTag = document.getElementById('latency-tag');
@@ -862,8 +863,9 @@
 
         if (res.ok) {
           const json = await res.json();
+          pill.className = "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200";
           dot.className = "w-2 h-2 rounded-full bg-green-500";
-          connText.innerText = `Online (${rtt}ms)`;
+          connText.innerText = `API & DB Online (${rtt}ms)`;
           latTag.innerText = `${rtt} ms RTT (DB ${json.db_latency_ms} ms)`;
 
           const statLat = document.getElementById('stat-latency');
@@ -878,8 +880,9 @@
           throw new Error("HTTP error");
         }
       } catch (e) {
+        pill.className = "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200";
         dot.className = "w-2 h-2 rounded-full bg-red-500";
-        connText.innerText = "Offline";
+        connText.innerText = "API Offline";
         latTag.innerText = "Connection failed";
       }
     }
