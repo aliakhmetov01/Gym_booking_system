@@ -22,3 +22,6 @@ Thumbs.db
 backups/*.db
 backups/*.json
 gym_store.json
+
+# Secrets (database password, SECRET_KEY)
+.env

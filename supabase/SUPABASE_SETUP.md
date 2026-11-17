@@ -4,13 +4,20 @@
 холодном старте функции, поэтому аккаунты и брони там «живут» недолго. Supabase даёт постоянную
 PostgreSQL-базу, которой одинаково пользуются и локальная версия, и Vercel.
 
-## 1. Создать проект
+> **Supabase работает в облаке, а не на чьём-то ноутбуке.** Неважно, у кого создан аккаунт:
+> база доступна из интернета любому, у кого есть строка подключения. Владельцу проекта нужно
+> только передать её остальным (шаг 3).
+
+Код для работы с Supabase уже написан (`api/_pg.py`). Он включается сам, когда задана переменная
+`DATABASE_URL`. Если она не задана, приложение работает на SQLite, как раньше.
+
+## 1. Создать проект (делает владелец аккаунта)
 
 1. Зайдите на https://supabase.com → **New project**.
 2. Укажите имя (например `gym-booking`), придумайте **Database Password** и сохраните его.
 3. Region: ближайший, например **Frankfurt (eu-central-1)**.
 
-## 2. Создать таблицы
+## 2. Создать таблицы (делает владелец аккаунта)
 
 1. В проекте откройте **SQL Editor → New query**.
 2. Вставьте содержимое файла [`schema.sql`](schema.sql) и нажмите **Run**.
@@ -28,82 +35,90 @@ PostgreSQL-базу, которой одинаково пользуются и �
 Получается двойная защита: правила проверяет и Flask API, и сама база. Это хороший аргумент
 на защите.
 
-## 3. Взять строку подключения
+## 3. Взять строку подключения и передать её (делает владелец аккаунта)
 
-**Project → Connect** (кнопка вверху) → вкладка **Connection string → URI**.
-
-* Для Vercel (serverless) выберите **Transaction pooler**, порт **6543**:
-  ```
-  postgresql://postgres.<project-ref>:<PASSWORD>@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
-  ```
-* Для локального запуска подойдёт **Session pooler** (порт 5432) или та же строка.
-
-Вместо `<PASSWORD>` подставьте пароль из шага 1.
-**Не коммитьте эту строку в git.**
-
-## 4. Переменные окружения
-
-| Переменная | Где задать | Значение |
-| :--- | :--- | :--- |
-| `DATABASE_URL` | Vercel → Project → Settings → Environment Variables | строка из шага 3 |
-| `SECRET_KEY` | там же | длинная случайная строка: `python -c "import secrets; print(secrets.token_hex(32))"` |
-
-Локально (PowerShell):
-
-```powershell
-$env:DATABASE_URL = "postgresql://..."
-$env:SECRET_KEY = "..."
-python app.py
-```
-
-`SECRET_KEY` нужен уже сейчас: им подписываются токены входа. Без него используется
-dev-ключ из кода, и тогда любой, кто видел репозиторий, может подделать токен.
-
-## 5. Изменения в коде (следующий шаг)
-
-1. Добавить драйвер в `requirements.txt`:
+1. В проекте нажмите кнопку **Connect** вверху страницы.
+2. Выберите **Connection string → URI → Transaction pooler** (порт **6543**). Строка выглядит так:
    ```
-   psycopg[binary]>=3.2
+   postgresql://postgres.abcdefghijkl:[YOUR-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
    ```
-2. В `api/_database.py` добавить третий движок рядом с SQLite и JSON:
-   ```python
-   DATABASE_URL = os.environ.get("DATABASE_URL")
-   USE_POSTGRES = bool(DATABASE_URL)
+3. Замените `[YOUR-PASSWORD]` (вместе со скобками) на пароль из шага 1.
+4. Отправьте готовую строку тому, у кого код, **в личном сообщении**. Не публикуйте её в общем
+   чате, на GitHub или в README: с ней у человека полный доступ к базе.
 
-   def _pg_conn():
-       import psycopg
-       from psycopg.rows import dict_row
-       # prepare_threshold=None обязателен для Transaction pooler (порт 6543)
-       return psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+Если пароль содержит символы `@ : / ? #`, их нужно закодировать (`@` → `%40`) или проще
+сменить пароль на буквы и цифры: **Project Settings → Database → Reset database password**.
+
+## 4. Подключить локально (делает тот, у кого код)
+
+1. В корне проекта (рядом с `app.py`) скопируйте файл `.env.example` в новый файл `.env`.
+2. Откройте `.env` и вставьте свои значения:
    ```
-3. В каждой публичной функции (`create_booking`, `cancel_booking`, `get_user_bookings`, …)
-   добавить ветку `if USE_POSTGRES:` с теми же SQL-запросами. Отличия от SQLite:
-   * плейсхолдеры `%s` вместо `?`;
-   * блокировка строки сессии при бронировании `SELECT ... FROM sessions WHERE id = %s FOR UPDATE`
-     вместо `BEGIN IMMEDIATE`;
-   * `INSERT ... RETURNING id` вместо `cursor.lastrowid`;
-   * `created_at`, `session_date` и `session_time` возвращаются как `datetime`, `date` и `time`,
-     а не строки. Их нужно форматировать в `"%Y-%m-%d %H:%M:%S"`, `"%Y-%m-%d"` и `"%H:%M"`,
-     потому что фронтенд ждёт строки;
-   * ошибки триггеров (лимит и окно отмены) приходят как `psycopg.errors.CheckViolation`.
-     Их надо ловить и возвращать как `{"success": False, "error": str(e.diag.message_primary)}`.
-   * `init_db()` для Postgres ничего не создаёт: схему один раз создаёт `schema.sql`.
-4. `get_storage_engine_name()` → `"Supabase PostgreSQL"`, чтобы это было видно на вкладке **System**.
-5. Бэкапы: на Supabase физическую копию файла сделать нельзя. Кнопку **Create Backup** можно
-   переделать на JSON-экспорт всех таблиц (`SELECT *` из каждой). Кроме того, Supabase сам делает
-   ежедневные бэкапы на платных тарифах.
+   DATABASE_URL=postgresql://postgres.abcdefghijkl:ПАРОЛЬ@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
+   SECRET_KEY=любая-длинная-случайная-строка
+   ```
+   Случайную строку для `SECRET_KEY` можно получить так:
+   ```
+   python -c "import secrets; print(secrets.token_hex(32))"
+   ```
+3. Установите драйвер Postgres (один раз):
+   ```
+   pip install -r requirements.txt
+   ```
+4. Запустите приложение:
+   ```
+   python app.py
+   ```
+5. Откройте http://localhost:5000 → вкладка **System**. В блоке «Database Storage» должно быть
+   написано **Supabase PostgreSQL**.
+
+Файл `.env` уже добавлен в `.gitignore`, поэтому пароль не попадёт на GitHub.
+
+## 5. Подключить на Vercel
+
+1. Vercel → ваш проект → **Settings → Environment Variables**.
+2. Добавьте две переменные (Environment: Production, Preview, Development):
+   * `DATABASE_URL` — та же строка, что в `.env`;
+   * `SECRET_KEY` — та же строка, что в `.env`.
+3. **Deployments** → у последнего деплоя **⋯ → Redeploy**. Переменные применяются только
+   к новому деплою.
+4. Откройте `https://<ваш-сайт>/api/health`. В поле `storage_engine` должно быть
+   `"Supabase PostgreSQL"`.
 
 ## 6. Проверка
 
-1. Откройте `/api/health`, в поле `storage_engine` должно быть `Supabase PostgreSQL`.
+1. Нажмите **Reset demo data** на вкладке Schedule. Это загрузит 16 тренировок и демо-бронь
+   `BK-10101`. Аккаунты при сбросе не удаляются.
 2. Зарегистрируйтесь и забронируйте тренировку. В Supabase **Table Editor → bookings** должна
    появиться строка.
-3. Попробуйте третью бронь, сервер должен её отклонить.
+3. Попробуйте третью бронь, сервер её отклонит.
 4. Чтобы проверить окно отмены, в SQL Editor «состарьте» бронь, затем нажмите Cancel в профиле.
-   Отмена должна быть отклонена:
+   Отмена будет отклонена:
    ```sql
    update bookings set created_at = now() - interval '25 hours' where booking_code = 'BK-XXXXX';
    ```
+
+## Если что-то не работает
+
+| Ошибка | Причина |
+| :--- | :--- |
+| `password authentication failed` | неверный пароль в строке или не убраны скобки `[ ]` |
+| `could not translate host name` | опечатка в адресе или нет интернета |
+| `relation "users" does not exist` | не выполнен шаг 2 (`schema.sql`) |
+| `No module named 'psycopg'` | не выполнен `pip install -r requirements.txt` |
+| На вкладке System всё ещё SQLite | файл назван не `.env` (например `.env.txt`) или лежит не в корне проекта |
+
+## Как это устроено в коде
+
+* `api/_database.py` при запуске читает `.env` и проверяет `DATABASE_URL`. Если переменная задана,
+  все функции работы с данными заменяются версиями из `api/_pg.py`.
+* `api/_pg.py` выполняет те же операции на PostgreSQL. При бронировании строка тренировки
+  блокируется (`SELECT ... FOR UPDATE`), поэтому два человека не займут последнее место
+  одновременно.
+* Даты из Postgres переводятся в строки того же формата, что и в SQLite, поэтому фронтенд
+  не менялся.
+* Бэкап на Supabase сохраняет JSON-экспорт всех таблиц (без хешей паролей) и пишет запись
+  в `backup_logs`.
 
 ## Альтернатива: Supabase Auth
 

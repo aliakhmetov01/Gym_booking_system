@@ -30,6 +30,28 @@ except ImportError:
 
 _STORE_LOCK = threading.Lock()
 
+
+def _load_dotenv():
+    """Reads KEY=VALUE lines from the project's .env file (local development only).
+    Real environment variables (e.g. set in Vercel) always take priority."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                value = value.strip().strip('"').strip("'")
+                os.environ.setdefault(key.strip(), value)
+    except OSError:
+        pass
+
+
+_load_dotenv()
+
 # ---- Business rules ----
 MAX_ACTIVE_BOOKINGS = 2
 CANCEL_WINDOW_HOURS = 24
@@ -1061,3 +1083,19 @@ def get_backups():
     with _STORE_LOCK:
         store = _json_load_store()
         return list(sorted(store["backup_logs"], key=lambda x: x["id"], reverse=True))
+
+
+# =========================================================================
+# ENGINE 3: SUPABASE / POSTGRESQL (when DATABASE_URL is set)
+# Replaces the functions above with the versions from _pg.py.
+# =========================================================================
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
+if USE_POSTGRES:
+    if __package__:
+        from . import _pg as _pg_engine
+    else:
+        import _pg as _pg_engine
+    _pg_engine.bind(globals(), DATABASE_URL)
