@@ -55,7 +55,11 @@
 |                 2. APPLICATION SERVER                 |
 |   Flask / Python (Vercel Serverless & Local WSGI)     |
 |   - GET  /api/sessions   -> Schedule & Free Seats     |
+|   - POST /api/auth/register | /api/auth/login         |
+|   - GET  /api/auth/me    -> Current member (token)    |
 |   - POST /api/book       -> Transactional Booking     |
+|   - GET  /api/my/bookings-> Member profile bookings   |
+|   - POST /api/cancel     -> Cancel own booking (24h)  |
 |   - POST /api/checkin    -> Reception Desk Check-in   |
 |   - POST /api/backup     -> Disaster Recovery Engine  |
 |   - GET  /api/health     -> Network Latency & Metrics |
@@ -66,12 +70,31 @@
 +---------------------------v---------------------------+
 |                 3. DATA STORAGE LAYER                 |
 |   SQLite Relational Database (gym.db)                 |
+|   - users table (hashed passwords, unique email)      |
 |   - sessions table (SES-### format enforced)          |
-|   - bookings table (Foreign Key to sessions.id)       |
+|   - bookings table (FK to sessions.id and users.id)   |
 |   - backup_logs table (Disaster Recovery Audit)       |
 |   - backups/ directory (Physical DB Snapshots)        |
 +-------------------------------------------------------+
 ```
+
+---
+
+## 👤 Member Accounts & Booking Rules
+
+* **Sign up / Log in** from the header. Passwords are stored only as salted hashes (`werkzeug.security`); the API issues a signed token (`itsdangerous`, valid 7 days) sent as `Authorization: Bearer <token>`.
+* **My Bookings (profile):** account details, active-booking counter, every booking with its status, QR ticket and cancel button.
+* **Demo account:** `demo@gym.kz` / `demo1234` (seeded automatically, owns booking `BK-10101`).
+
+| Rule | Description | Enforced in |
+| :--- | :--- | :--- |
+| **FR-03** | No overbooking: `booked_count ≤ capacity` | API transaction + DB `CHECK` |
+| **BR-04** | A member may hold at most **2 active (CONFIRMED) bookings** at the same time | `create_booking()` |
+| **BR-05** | A booking can be cancelled only **within 24 hours after it was made**; cancelling frees the seat | `cancel_booking()` |
+| **BR-06** | Only the owner can cancel a booking; cancelled bookings cannot be checked in | API + reception |
+
+Set the `SECRET_KEY` environment variable in production (Vercel → Settings → Environment Variables).
+For a persistent cloud database see [supabase/SUPABASE_SETUP.md](supabase/SUPABASE_SETUP.md).
 
 ---
 
@@ -99,18 +122,26 @@ Open your browser at: **`http://localhost:5000`**
 ## 🧪 How to Demonstrate in Practical Class (7-Minute Presentation)
 
 ### Test Case 1: Standard Member Booking (FR-01 & FR-02)
-1. Open the **"1. Member Booking"** tab.
-2. Find session **`SES-101` (CrossFit Conditioning)**. Notice it has available spots (e.g. 4 free places).
-3. Click **"Book Spot"**, enter your name and phone, then click **"Confirm Booking"**.
+1. Click **Sign up** in the header and create an account (or log in as `demo@gym.kz` / `demo1234`).
+2. In the **Schedule** tab find session **`SES-102` (Strength: Upper Body Focus)**.
+3. Click **"Book for 09:30"**, check your name in the dialog, then click **"Confirm Booking"**.
 4. **Result:** Booking succeeds instantly. A confirmation ticket appears displaying your **unique booking code (e.g. `BK-88707`) and a scannable QR code**.
-5. Close the ticket: notice the free seats on `SES-101` automatically decreased by 1.
+5. Close the ticket: the free seats on `SES-102` decreased by 1 and the card shows *You're booked*.
 
 ### Test Case 2: Overbooking Prevention (FR-03 & TC-01)
-1. In the schedule, locate session **`SES-103` (Boxing & Core Technique)**.
-2. Notice the badge says **`10 of 10 booked • FULLY BOOKED`**.
-3. Click the red button **"Test Overbooking (FR-03)"** and submit the booking.
-4. **Result:** The system strictly rejects the request:  
-   *`"Session SES-103 is fully booked (10/10 places taken). Acceptance criteria FR-03 enforced."`*
+1. In the schedule, locate session **`SES-106` (Boxing Sparring & Technique)**, shown as `8/8 booked • Full`.
+2. Click the red button **"Full (Test Overbooking)"** and submit the booking.
+3. **Result:** The system strictly rejects the request:  
+   *`"Session SES-106 is fully booked (8/8 places taken). Acceptance criteria FR-03 enforced."`*
+
+### Test Case 2b: Booking Limit (BR-04)
+1. While logged in, book two different sessions.
+2. Try to book a third one.
+3. **Result:** *`"Booking limit reached: you already have 2 active bookings..."`* The profile counter shows `2 / 2`.
+
+### Test Case 2c: Cancellation Window (BR-05)
+1. Open **My Bookings** and click **Cancel** on a fresh booking. It becomes `CANCELLED` and the seat is released.
+2. The demo booking `BK-10101` becomes non-cancellable 24 hours after the seed was created (*Cancel window closed*).
 
 ### Test Case 3: Reception Desk Check-in (Week 5)
 1. Switch to the **"2. Reception Desk"** tab.

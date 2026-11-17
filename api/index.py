@@ -7,8 +7,10 @@ import os
 import sys
 import time
 from datetime import datetime
+from functools import wraps
 from urllib.parse import parse_qs
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 try:
     from . import _database as database
@@ -24,6 +26,39 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 app = Flask(__name__, static_folder=PUBLIC_DIR)
 app.url_map.strict_slashes = False
 START_TIME = time.time()
+
+# Signed, stateless auth tokens (work on serverless without a session store).
+# Set SECRET_KEY in the environment (Vercel -> Settings -> Environment Variables) for production.
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me-gym-booking-bis")
+TOKEN_MAX_AGE_SEC = 7 * 24 * 3600
+_token_serializer = URLSafeTimedSerializer(SECRET_KEY, salt="gym-auth")
+
+
+def issue_token(user_id: int) -> str:
+    return _token_serializer.dumps({"uid": user_id})
+
+
+def require_auth(view):
+    """Rejects the request with 401 unless it carries a valid 'Authorization: Bearer <token>'."""
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        header = request.headers.get("Authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not token:
+            return jsonify({"status": "error", "message": "Please log in to continue."}), 401
+        try:
+            payload = _token_serializer.loads(token, max_age=TOKEN_MAX_AGE_SEC)
+        except SignatureExpired:
+            return jsonify({"status": "error", "message": "Your session expired. Please log in again."}), 401
+        except BadSignature:
+            return jsonify({"status": "error", "message": "Invalid session. Please log in again."}), 401
+
+        user = database.get_user_by_id(payload.get("uid"))
+        if not user:
+            return jsonify({"status": "error", "message": "Account not found. Please log in again."}), 401
+        g.user = user
+        return view(*args, **kwargs)
+    return wrapper
 
 
 class VercelPathFixMiddleware:
@@ -142,26 +177,88 @@ def api_create_session():
     return jsonify({"status": "success", "message": result["message"]}), 201
 
 
+@app.route("/api/auth/register", methods=["POST"])
+def api_register():
+    """Creates a member account and logs the member in."""
+    data = request.get_json(silent=True) or {}
+    result = database.register_user(
+        data.get("full_name", ""),
+        data.get("email", ""),
+        data.get("phone", ""),
+        data.get("password", ""),
+    )
+    if not result["success"]:
+        return jsonify({"status": "error", "message": result["error"]}), 400
+    user = result["user"]
+    return jsonify({
+        "status": "success",
+        "message": f"Welcome, {user['full_name']}! Your account is ready.",
+        "data": {"token": issue_token(user["id"]), "user": user},
+    }), 201
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    data = request.get_json(silent=True) or {}
+    result = database.authenticate_user(data.get("email", ""), data.get("password", ""))
+    if not result["success"]:
+        return jsonify({"status": "error", "message": result["error"]}), 401
+    user = result["user"]
+    return jsonify({
+        "status": "success",
+        "message": f"Welcome back, {user['full_name']}!",
+        "data": {"token": issue_token(user["id"]), "user": user},
+    })
+
+
+@app.route("/api/auth/me", methods=["GET"])
+@require_auth
+def api_me():
+    return jsonify({"status": "success", "data": g.user})
+
+
+@app.route("/api/my/bookings", methods=["GET"])
+@require_auth
+def api_my_bookings():
+    """Profile: the member's bookings, active count vs limit, and cancel eligibility."""
+    bookings = database.get_user_bookings(g.user["id"])
+    active = sum(1 for b in bookings if b["status"] == "CONFIRMED")
+    return jsonify({
+        "status": "success",
+        "data": bookings,
+        "rules": {
+            "active_count": active,
+            "max_active_bookings": database.MAX_ACTIVE_BOOKINGS,
+            "cancel_window_hours": database.CANCEL_WINDOW_HOURS,
+        },
+    })
+
+
+@app.route("/api/cancel", methods=["POST"])
+@require_auth
+def api_cancel_booking():
+    """BR-05: cancel own booking within 24 hours after it was made."""
+    data = request.get_json(silent=True) or {}
+    code = data.get("booking_code", "")
+    if not code:
+        return jsonify({"status": "error", "message": "Booking code is required."}), 400
+    result = database.cancel_booking(code, g.user["id"])
+    if not result["success"]:
+        return jsonify({"status": "error", "message": result["error"]}), 400
+    return jsonify({"status": "success", "message": result["message"]})
+
+
 @app.route("/api/book", methods=["POST"])
+@require_auth
 def api_book_session():
-    """FR-02 & FR-03: Books training session, prevents overbooking, updates free places."""
-    data = request.get_json() or {}
-    session_id = data.get("session_id")
-    member_name = data.get("member_name", "")
-    member_phone = data.get("member_phone", "")
-
-    if not session_id or not member_name or not member_phone:
-        return jsonify({
-            "status": "error",
-            "message": "Please provide session_id, member_name, and member_phone.",
-        }), 400
-
+    """FR-02, FR-03 & BR-04: logged-in member books a session (max 2 active bookings)."""
+    data = request.get_json(silent=True) or {}
     try:
-        session_id = int(session_id)
-    except ValueError:
+        session_id = int(data.get("session_id"))
+    except (TypeError, ValueError):
         return jsonify({"status": "error", "message": "Invalid session_id."}), 400
 
-    result = database.create_booking(session_id, member_name, member_phone)
+    result = database.create_booking(session_id, g.user["id"])
     if not result["success"]:
         return jsonify({"status": "error", "message": result["error"]}), 400
 

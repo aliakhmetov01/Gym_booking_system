@@ -52,12 +52,38 @@
           <button onclick="switchTab('network')" id="tab-btn-network" class="tab-btn px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
             System
           </button>
+          <button onclick="switchTab('profile')" id="tab-btn-profile" class="tab-btn hidden px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
+            My Bookings
+          </button>
         </nav>
 
-        <!-- Status Pill -->
-        <div id="connection-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-100 text-zinc-600 border border-zinc-200">
-          <span id="conn-dot" class="w-2 h-2 rounded-full bg-zinc-400"></span>
-          <span id="conn-status">API &amp; DB Checking...</span>
+        <div class="flex items-center gap-2">
+          <!-- Status Pill -->
+          <div id="connection-pill" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-100 text-zinc-600 border border-zinc-200">
+            <span id="conn-dot" class="w-2 h-2 rounded-full bg-zinc-400"></span>
+            <span id="conn-status">API &amp; DB Checking...</span>
+          </div>
+
+          <!-- Guest: login / register -->
+          <div id="auth-guest" class="flex items-center gap-1.5">
+            <button onclick="openAuthModal('login')" class="text-sm font-medium text-zinc-700 hover:bg-zinc-100 px-3 py-1.5 rounded-md transition">
+              Log in
+            </button>
+            <button onclick="openAuthModal('register')" class="text-sm font-medium bg-zinc-900 hover:bg-zinc-800 text-white px-3 py-1.5 rounded-md transition">
+              Sign up
+            </button>
+          </div>
+
+          <!-- Logged in: profile chip -->
+          <div id="auth-user" class="hidden items-center gap-1.5">
+            <button onclick="switchTab('profile')" class="flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border border-zinc-200 hover:bg-zinc-50 transition" title="Open my profile">
+              <span id="user-initials" class="w-6 h-6 rounded-full bg-zinc-900 text-white text-[11px] font-semibold flex items-center justify-center">--</span>
+              <span id="user-first-name" class="text-sm font-medium text-zinc-800">--</span>
+            </button>
+            <button onclick="logout()" class="text-xs font-medium text-zinc-500 hover:text-zinc-900 px-2 py-1.5 rounded-md transition">
+              Log out
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -375,6 +401,73 @@
       </div>
     </section>
 
+    <!-- TAB 6: MEMBER PROFILE -->
+    <section id="tab-profile" class="tab-content hidden space-y-6">
+      <div class="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 class="text-2xl font-bold text-zinc-900 tracking-tight">My Profile</h2>
+          <p class="text-sm text-zinc-500 mt-1">Your account, active bookings and cancellations.</p>
+        </div>
+        <button onclick="fetchMyBookings(true)" class="text-xs font-medium text-zinc-700 bg-white hover:bg-zinc-50 border border-zinc-300 px-3 py-1.5 rounded-md transition">
+          Refresh
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Account card -->
+        <div class="bg-white rounded-lg border border-zinc-200 p-5 flex items-start gap-4">
+          <div id="profile-avatar" class="w-12 h-12 shrink-0 rounded-full bg-zinc-900 text-white font-semibold flex items-center justify-center">--</div>
+          <div class="min-w-0 text-xs space-y-1">
+            <div id="profile-name" class="text-base font-semibold text-zinc-900 truncate">--</div>
+            <div id="profile-email" class="text-zinc-600 truncate">--</div>
+            <div id="profile-phone" class="text-zinc-600 font-mono">--</div>
+            <div id="profile-since" class="text-zinc-400">--</div>
+          </div>
+        </div>
+
+        <!-- Limit card -->
+        <div class="bg-white rounded-lg border border-zinc-200 p-5 text-xs">
+          <div class="text-zinc-500">Active bookings</div>
+          <div class="flex items-baseline gap-1 mt-1">
+            <span id="profile-active" class="text-2xl font-bold text-zinc-900">0</span>
+            <span id="profile-limit" class="text-sm text-zinc-500">/ 2</span>
+          </div>
+          <div class="w-full h-1.5 rounded-full bg-zinc-100 overflow-hidden mt-2">
+            <div id="profile-limit-bar" class="h-full bg-zinc-800" style="width: 0%"></div>
+          </div>
+          <p id="profile-limit-note" class="text-[11px] text-zinc-400 mt-2">You can hold up to 2 bookings at the same time.</p>
+        </div>
+
+        <!-- Rules card -->
+        <div class="bg-white rounded-lg border border-zinc-200 p-5 text-xs text-zinc-600 space-y-2">
+          <div class="font-semibold text-zinc-900">Booking rules</div>
+          <p><strong class="text-zinc-800">Limit:</strong> max <span class="rule-max">2</span> active bookings per member, so popular slots stay fair for everyone.</p>
+          <p><strong class="text-zinc-800">Cancellation:</strong> free cancellation within <span class="rule-window">24</span> hours after booking. After that the booking is locked.</p>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-lg border border-zinc-200 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
+                <th class="py-2.5 px-4">Code</th>
+                <th class="py-2.5 px-4">Session</th>
+                <th class="py-2.5 px-4">Date &amp; Time</th>
+                <th class="py-2.5 px-4">Booked at</th>
+                <th class="py-2.5 px-4">Cancel until</th>
+                <th class="py-2.5 px-4">Status</th>
+                <th class="py-2.5 px-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="my-bookings-body" class="divide-y divide-zinc-100">
+              <tr><td colspan="7" class="py-8 text-center text-zinc-400 text-xs">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- BOOKING MODAL -->
@@ -397,15 +490,12 @@
           <span id="modal-places-badge" class="font-medium text-zinc-600">-- places left</span>
         </div>
 
-        <div>
-          <label class="block font-medium text-zinc-700 mb-1">Full Name</label>
-          <input type="text" id="modal-member-name" required placeholder="Ali Akhmetov" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        <div class="p-3 rounded-md border border-zinc-200 space-y-1">
+          <div class="text-zinc-500">Booking as</div>
+          <div class="font-medium text-zinc-900" id="modal-member-line">--</div>
         </div>
 
-        <div>
-          <label class="block font-medium text-zinc-700 mb-1">Phone Number</label>
-          <input type="tel" id="modal-member-phone" required placeholder="+7 777 123 4567" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
-        </div>
+        <p id="modal-limit-note" class="text-[11px] text-zinc-500">--</p>
 
         <div class="flex gap-2 pt-2">
           <button type="button" onclick="closeBookingModal()" class="flex-1 py-2 text-sm font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded-md transition">
@@ -415,6 +505,60 @@
             Confirm Booking
           </button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- AUTH MODAL (LOGIN / REGISTER) -->
+  <div id="auth-modal" class="hidden fixed inset-0 z-50 bg-zinc-900/40 flex items-center justify-center p-4">
+    <div class="bg-white rounded-lg max-w-sm w-full p-6 shadow-xl border border-zinc-200">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <h3 id="auth-title" class="text-lg font-bold text-zinc-900">Log in</h3>
+          <p id="auth-subtitle" class="text-xs text-zinc-500 mt-0.5">Access your bookings.</p>
+        </div>
+        <button onclick="closeAuthModal()" class="text-zinc-400 hover:text-zinc-700 text-lg leading-none">&times;</button>
+      </div>
+
+      <!-- Login form -->
+      <form id="login-form" onsubmit="submitLogin(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block font-medium text-zinc-700 mb-1">Email</label>
+          <input type="email" id="login-email" required autocomplete="username" placeholder="you@example.com" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        </div>
+        <div>
+          <label class="block font-medium text-zinc-700 mb-1">Password</label>
+          <input type="password" id="login-password" required autocomplete="current-password" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        </div>
+        <button type="submit" class="w-full py-2 text-sm font-medium text-white bg-zinc-900 hover:bg-zinc-800 rounded-md transition">Log in</button>
+        <p class="text-center text-zinc-500">No account yet?
+          <button type="button" onclick="setAuthMode('register')" class="font-medium text-zinc-900 underline">Sign up</button>
+        </p>
+        <p class="text-center text-[11px] text-zinc-400">Demo account: demo@gym.kz / demo1234</p>
+      </form>
+
+      <!-- Register form -->
+      <form id="register-form" onsubmit="submitRegister(event)" class="hidden space-y-3 text-xs">
+        <div>
+          <label class="block font-medium text-zinc-700 mb-1">Full Name</label>
+          <input type="text" id="reg-name" required minlength="2" autocomplete="name" placeholder="Ali Akhmetov" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        </div>
+        <div>
+          <label class="block font-medium text-zinc-700 mb-1">Email</label>
+          <input type="email" id="reg-email" required autocomplete="email" placeholder="you@example.com" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        </div>
+        <div>
+          <label class="block font-medium text-zinc-700 mb-1">Phone Number</label>
+          <input type="tel" id="reg-phone" required autocomplete="tel" placeholder="+7 777 123 4567" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        </div>
+        <div>
+          <label class="block font-medium text-zinc-700 mb-1">Password</label>
+          <input type="password" id="reg-password" required minlength="6" autocomplete="new-password" placeholder="At least 6 characters" class="w-full text-sm px-3 py-2 border border-zinc-300 rounded-md focus:outline-none focus:border-zinc-600">
+        </div>
+        <button type="submit" class="w-full py-2 text-sm font-medium text-white bg-zinc-900 hover:bg-zinc-800 rounded-md transition">Create account</button>
+        <p class="text-center text-zinc-500">Already have an account?
+          <button type="button" onclick="setAuthMode('login')" class="font-medium text-zinc-900 underline">Log in</button>
+        </p>
       </form>
     </div>
   </div>
@@ -464,8 +608,31 @@
   <!-- APP LOGIC -->
   <script>
     let currentSessions = [];
+    let currentUser = null;
+    let myBookings = [];
+    let bookingRules = { active_count: 0, max_active_bookings: 2, cancel_window_hours: 24 };
+    let pendingSessionId = null;   // session the guest wanted to book before logging in
+    const TOKEN_KEY = 'gym_auth_token';
+
+    // Escape user-provided text before inserting into HTML
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[ch]));
+    }
+
+    function getToken() {
+      try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; }
+    }
+    function setToken(token) {
+      try {
+        if (token) localStorage.setItem(TOKEN_KEY, token);
+        else localStorage.removeItem(TOKEN_KEY);
+      } catch (e) { /* storage unavailable: session lasts until reload */ }
+    }
 
     document.addEventListener("DOMContentLoaded", () => {
+      restoreSession();
       fetchSessions();
       checkHealth();
       setInterval(checkHealth, 10000);
@@ -492,6 +659,7 @@
       if (tabId === 'reception') fetchBookings();
       if (tabId === 'security') fetchBackups();
       if (tabId === 'network') checkHealth();
+      if (tabId === 'profile') fetchMyBookings(true);
     }
 
     function showToast(message, isError = false) {
@@ -505,7 +673,258 @@
     }
 
     async function apiRequest(endpoint, options = {}) {
-      return await fetch('/api' + endpoint, options);
+      const headers = Object.assign({}, options.headers || {});
+      const token = getToken();
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('/api' + endpoint, Object.assign({}, options, { headers }));
+      if (res.status === 401 && token) {
+        // Token expired or account missing: drop local session
+        applyLoggedOut();
+      }
+      return res;
+    }
+
+    // ---------------- AUTH ----------------
+    async function restoreSession() {
+      if (!getToken()) { applyLoggedOut(); return; }
+      try {
+        const res = await apiRequest('/auth/me');
+        if (!res.ok) return;
+        const json = await res.json();
+        applyLoggedIn(json.data);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function initials(name) {
+      return String(name || '?').trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase();
+    }
+
+    function applyLoggedIn(user) {
+      currentUser = user;
+      document.getElementById('auth-guest').classList.add('hidden');
+      const box = document.getElementById('auth-user');
+      box.classList.remove('hidden');
+      box.classList.add('flex');
+      document.getElementById('user-initials').innerText = initials(user.full_name);
+      document.getElementById('user-first-name').innerText = user.full_name.split(' ')[0];
+      document.getElementById('tab-btn-profile').classList.remove('hidden');
+      fetchMyBookings();
+    }
+
+    function applyLoggedOut() {
+      setToken(null);
+      currentUser = null;
+      myBookings = [];
+      document.getElementById('auth-guest').classList.remove('hidden');
+      const box = document.getElementById('auth-user');
+      box.classList.add('hidden');
+      box.classList.remove('flex');
+      document.getElementById('tab-btn-profile').classList.add('hidden');
+      if (!document.getElementById('tab-profile').classList.contains('hidden')) switchTab('sessions');
+      if (currentSessions.length) renderSessions();
+    }
+
+    function logout() {
+      applyLoggedOut();
+      showToast('You have been logged out.');
+    }
+
+    function setAuthMode(mode) {
+      const isLogin = mode === 'login';
+      document.getElementById('login-form').classList.toggle('hidden', !isLogin);
+      document.getElementById('register-form').classList.toggle('hidden', isLogin);
+      document.getElementById('auth-title').innerText = isLogin ? 'Log in' : 'Create account';
+      document.getElementById('auth-subtitle').innerText = isLogin
+        ? 'Access your bookings.'
+        : 'Book sessions and manage them in your profile.';
+    }
+
+    function openAuthModal(mode) {
+      setAuthMode(mode);
+      document.getElementById('auth-modal').classList.remove('hidden');
+      const first = document.getElementById(mode === 'login' ? 'login-email' : 'reg-name');
+      if (first) setTimeout(() => first.focus(), 50);
+    }
+
+    function closeAuthModal() {
+      document.getElementById('auth-modal').classList.add('hidden');
+    }
+
+    async function handleAuthResponse(res) {
+      const data = await res.json();
+      if (res.ok && data.status === 'success') {
+        setToken(data.data.token);
+        applyLoggedIn(data.data.user);
+        closeAuthModal();
+        showToast(data.message);
+        if (pendingSessionId !== null) {
+          const sid = pendingSessionId;
+          pendingSessionId = null;
+          await fetchMyBookings();
+          openBookingModal(sid);
+        }
+      } else {
+        showToast(data.message || 'Request failed', true);
+      }
+    }
+
+    async function submitLogin(e) {
+      e.preventDefault();
+      try {
+        const res = await apiRequest('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('login-email').value,
+            password: document.getElementById('login-password').value,
+          })
+        });
+        await handleAuthResponse(res);
+        if (res.ok) document.getElementById('login-password').value = '';
+      } catch (err) {
+        showToast('Network failure', true);
+      }
+    }
+
+    async function submitRegister(e) {
+      e.preventDefault();
+      try {
+        const res = await apiRequest('/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            full_name: document.getElementById('reg-name').value,
+            email: document.getElementById('reg-email').value,
+            phone: document.getElementById('reg-phone').value,
+            password: document.getElementById('reg-password').value,
+          })
+        });
+        await handleAuthResponse(res);
+        if (res.ok) document.getElementById('register-form').reset();
+      } catch (err) {
+        showToast('Network failure', true);
+      }
+    }
+
+    // ---------------- PROFILE ----------------
+    async function fetchMyBookings(renderProfileToo = false) {
+      if (!getToken()) return;
+      try {
+        const res = await apiRequest('/my/bookings');
+        if (!res.ok) return;
+        const json = await res.json();
+        myBookings = json.data;
+        bookingRules = json.rules;
+        renderSessions();
+        renderProfile();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function renderProfile() {
+      if (!currentUser) return;
+      document.getElementById('profile-avatar').innerText = initials(currentUser.full_name);
+      document.getElementById('profile-name').innerText = currentUser.full_name;
+      document.getElementById('profile-email').innerText = currentUser.email;
+      document.getElementById('profile-phone').innerText = currentUser.phone;
+      document.getElementById('profile-since').innerText = `Member since ${currentUser.created_at.split(' ')[0]}`;
+
+      const { active_count, max_active_bookings, cancel_window_hours } = bookingRules;
+      document.getElementById('profile-active').innerText = active_count;
+      document.getElementById('profile-limit').innerText = `/ ${max_active_bookings}`;
+      const atLimit = active_count >= max_active_bookings;
+      const bar = document.getElementById('profile-limit-bar');
+      bar.style.width = `${Math.min(100, Math.round(active_count / max_active_bookings * 100))}%`;
+      bar.className = `h-full ${atLimit ? 'bg-red-500' : 'bg-zinc-800'}`;
+      document.getElementById('profile-limit-note').innerText = atLimit
+        ? 'Limit reached. Cancel a booking or attend a session to book another one.'
+        : `You can book ${max_active_bookings - active_count} more session(s) right now.`;
+      document.querySelectorAll('.rule-max').forEach(el => el.innerText = max_active_bookings);
+      document.querySelectorAll('.rule-window').forEach(el => el.innerText = cancel_window_hours);
+
+      const tbody = document.getElementById('my-bookings-body');
+      if (myBookings.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-zinc-400 text-xs">You have no bookings yet. Pick a session in the Schedule tab.</td></tr>`;
+        return;
+      }
+
+      const statusStyle = {
+        CONFIRMED: 'bg-zinc-100 text-zinc-700',
+        CHECKED_IN: 'bg-green-50 text-green-700 border border-green-200',
+        CANCELLED: 'bg-red-50 text-red-700 border border-red-200',
+      };
+
+      tbody.innerHTML = myBookings.map(b => {
+        let action;
+        if (b.can_cancel) {
+          action = `
+            <div class="flex justify-end gap-1.5">
+              <button onclick="showTicketFromProfile('${esc(b.booking_code)}')" class="text-xs font-medium px-2.5 py-1 rounded bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-800 transition">QR</button>
+              <button onclick="cancelMyBooking('${esc(b.booking_code)}')" class="text-xs font-medium px-2.5 py-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 transition">Cancel</button>
+            </div>`;
+        } else if (b.status === 'CONFIRMED') {
+          action = `
+            <div class="flex justify-end items-center gap-1.5">
+              <span class="text-[11px] text-zinc-400" title="${esc(b.cancel_block_reason)}">Cancel window closed</span>
+              <button onclick="showTicketFromProfile('${esc(b.booking_code)}')" class="text-xs font-medium px-2.5 py-1 rounded bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-800 transition">QR</button>
+            </div>`;
+        } else {
+          action = `<span class="text-xs text-zinc-400">&mdash;</span>`;
+        }
+        return `
+          <tr class="hover:bg-zinc-50 ${b.status === 'CANCELLED' ? 'opacity-60' : ''}">
+            <td class="py-2.5 px-4 font-mono font-medium text-zinc-900 whitespace-nowrap">${esc(b.booking_code)}</td>
+            <td class="py-2.5 px-4 text-xs text-zinc-700">${esc(b.session_code)} &middot; ${esc(b.session_title)}<div class="text-[11px] text-zinc-400">${esc(b.trainer)}</div></td>
+            <td class="py-2.5 px-4 text-xs text-zinc-600">${esc(b.session_date)} ${esc(b.session_time)}</td>
+            <td class="py-2.5 px-4 text-xs text-zinc-500">${esc(b.created_at)}</td>
+            <td class="py-2.5 px-4 text-xs ${b.can_cancel ? 'text-zinc-700' : 'text-zinc-400'}">${b.status === 'CONFIRMED' ? esc(b.cancel_deadline) : '&mdash;'}</td>
+            <td class="py-2.5 px-4">
+              <span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium ${statusStyle[b.status] || statusStyle.CONFIRMED}">${esc(b.status)}</span>
+            </td>
+            <td class="py-2.5 px-4 text-right">${action}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    async function cancelMyBooking(code) {
+      const b = myBookings.find(x => x.booking_code === code);
+      const label = b ? `${b.session_code} (${b.session_date} ${b.session_time})` : code;
+      if (!confirm(`Cancel booking ${code} for ${label}? The spot will be released.`)) return;
+      try {
+        const res = await apiRequest('/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ booking_code: code })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(data.message);
+          fetchSessions();
+          fetchMyBookings();
+        } else {
+          showToast(data.message, true);
+          fetchMyBookings();
+        }
+      } catch (err) {
+        showToast('Cancellation failed', true);
+      }
+    }
+
+    function showTicketFromProfile(code) {
+      const b = myBookings.find(x => x.booking_code === code);
+      if (!b || !currentUser) return;
+      openTicketModal({
+        booking_code: b.booking_code,
+        member_name: currentUser.full_name,
+        session: { session_code: b.session_code, title: b.session_title, date: b.session_date, time: b.session_time },
+      });
+    }
+
+    function activeBookingFor(sessionId) {
+      return myBookings.find(b => b.session_id === sessionId && b.status !== 'CANCELLED');
     }
 
     async function fetchSessions() {
@@ -560,17 +979,36 @@
       container.innerHTML = filtered.map(s => {
         const isFull = s.free_places <= 0;
         const percent = Math.min(100, Math.round((s.booked_count / s.capacity) * 100));
+        const mine = currentUser ? activeBookingFor(s.id) : null;
+
+        let actionHtml;
+        if (mine) {
+          actionHtml = `
+            <button onclick="switchTab('profile')" class="w-full py-2 text-xs font-medium rounded-md bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 transition">
+              You're booked &middot; ${esc(mine.booking_code)} (${esc(mine.status)})
+            </button>`;
+        } else if (isFull) {
+          actionHtml = `
+            <button onclick="tryBookFullSession('${esc(s.session_code)}')" class="w-full py-2 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition">
+              Full (Test Overbooking)
+            </button>`;
+        } else {
+          actionHtml = `
+            <button onclick="openBookingModal(${s.id})" class="w-full py-2 text-xs font-medium rounded-md bg-zinc-900 hover:bg-zinc-800 text-white transition">
+              Book for ${esc(s.session_time)}
+            </button>`;
+        }
 
         return `
-          <div class="bg-white rounded-lg border border-zinc-200 p-4 flex flex-col justify-between">
+          <div class="bg-white rounded-lg border ${mine ? 'border-green-300' : 'border-zinc-200'} p-4 flex flex-col justify-between">
             <div>
               <div class="flex items-center justify-between text-xs text-zinc-500 mb-2">
-                <span class="font-mono">${s.session_code} &middot; ${s.category}</span>
-                <span class="font-medium text-zinc-700">${s.session_date} &middot; ${s.session_time}</span>
+                <span class="font-mono">${esc(s.session_code)} &middot; ${esc(s.category)}</span>
+                <span class="font-medium text-zinc-700">${esc(s.session_date)} &middot; ${esc(s.session_time)}</span>
               </div>
 
-              <h3 class="text-base font-semibold text-zinc-900">${s.title}</h3>
-              <p class="text-xs text-zinc-500 mt-1">Trainer: ${s.trainer}</p>
+              <h3 class="text-base font-semibold text-zinc-900">${esc(s.title)}</h3>
+              <p class="text-xs text-zinc-500 mt-1">Trainer: ${esc(s.trainer)}</p>
 
               <div class="mt-4">
                 <div class="flex justify-between text-xs mb-1">
@@ -586,15 +1024,7 @@
             </div>
 
             <div class="mt-4 pt-3 border-t border-zinc-100">
-              ${isFull ? `
-                <button onclick="tryBookFullSession('${s.session_code}')" class="w-full py-2 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition">
-                  Full (Test Overbooking)
-                </button>
-              ` : `
-                <button onclick="openBookingModal(${s.id})" class="w-full py-2 text-xs font-medium rounded-md bg-zinc-900 hover:bg-zinc-800 text-white transition">
-                  Book for ${s.session_time}
-                </button>
-              `}
+              ${actionHtml}
             </div>
           </div>
         `;
@@ -604,6 +1034,22 @@
     function openBookingModal(sessionId) {
       const s = currentSessions.find(x => x.id === sessionId);
       if (!s) return;
+      if (!currentUser) {
+        pendingSessionId = sessionId;
+        showToast('Please log in or sign up to book a session.');
+        openAuthModal('login');
+        return;
+      }
+      const { active_count, max_active_bookings } = bookingRules;
+      document.getElementById('modal-member-line').innerText = `${currentUser.full_name} · ${currentUser.phone}`;
+      const note = document.getElementById('modal-limit-note');
+      if (active_count >= max_active_bookings) {
+        note.innerText = `You already have ${active_count}/${max_active_bookings} active bookings. The server will reject this booking until you cancel one.`;
+        note.className = 'text-[11px] text-red-600 font-medium';
+      } else {
+        note.innerText = `Active bookings: ${active_count}/${max_active_bookings}. Free cancellation within ${bookingRules.cancel_window_hours} hours after booking.`;
+        note.className = 'text-[11px] text-zinc-500';
+      }
       document.getElementById('modal-session-id').value = s.id;
       document.getElementById('modal-session-code').innerText = s.session_code;
       document.getElementById('modal-session-title').innerText = s.title;
@@ -620,18 +1066,12 @@
     async function submitBooking(e) {
       e.preventDefault();
       const sessionId = document.getElementById('modal-session-id').value;
-      const memberName = document.getElementById('modal-member-name').value;
-      const memberPhone = document.getElementById('modal-member-phone').value;
 
       try {
         const res = await apiRequest('/book', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: sessionId,
-            member_name: memberName,
-            member_phone: memberPhone
-          })
+          body: JSON.stringify({ session_id: sessionId })
         });
         const data = await res.json();
 
@@ -639,7 +1079,13 @@
           closeBookingModal();
           showToast(`Booked: ${data.data.booking_code}`);
           fetchSessions();
+          fetchMyBookings();
           openTicketModal(data.data);
+        } else if (res.status === 401) {
+          closeBookingModal();
+          pendingSessionId = parseInt(sessionId, 10);
+          showToast(data.message || 'Please log in again.', true);
+          openAuthModal('login');
         } else {
           showToast(data.message || "Booking rejected", true);
         }
@@ -695,25 +1141,29 @@
       }
       tbody.innerHTML = bookings.map(b => {
         const isChecked = b.status === 'CHECKED_IN';
+        const isCancelled = b.status === 'CANCELLED';
+        const badge = isChecked ? 'bg-green-50 text-green-700 border border-green-200'
+          : isCancelled ? 'bg-red-50 text-red-700 border border-red-200'
+          : 'bg-zinc-100 text-zinc-700';
         return `
-          <tr class="hover:bg-zinc-50">
-            <td class="py-2.5 px-4 font-mono font-medium text-zinc-900">${b.booking_code}</td>
-            <td class="py-2.5 px-4 text-zinc-800">${b.member_name}</td>
-            <td class="py-2.5 px-4 text-zinc-500 font-mono text-xs">${b.member_phone}</td>
-            <td class="py-2.5 px-4 text-xs text-zinc-700">${b.session_code} &middot; ${b.session_title}</td>
-            <td class="py-2.5 px-4 text-xs text-zinc-500">${b.session_date} ${b.session_time}</td>
+          <tr class="hover:bg-zinc-50 ${isCancelled ? 'opacity-60' : ''}">
+            <td class="py-2.5 px-4 font-mono font-medium text-zinc-900">${esc(b.booking_code)}</td>
+            <td class="py-2.5 px-4 text-zinc-800">${esc(b.member_name)}</td>
+            <td class="py-2.5 px-4 text-zinc-500 font-mono text-xs">${esc(b.member_phone)}</td>
+            <td class="py-2.5 px-4 text-xs text-zinc-700">${esc(b.session_code)} &middot; ${esc(b.session_title)}</td>
+            <td class="py-2.5 px-4 text-xs text-zinc-500">${esc(b.session_date)} ${esc(b.session_time)}</td>
             <td class="py-2.5 px-4">
-              <span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium ${
-                isChecked ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-zinc-100 text-zinc-700'
-              }">
-                ${b.status}
+              <span class="inline-block px-2 py-0.5 rounded text-[11px] font-medium ${badge}">
+                ${esc(b.status)}
               </span>
             </td>
             <td class="py-2.5 px-4 text-right">
               ${isChecked ? `
                 <span class="text-xs text-zinc-400">Checked in</span>
+              ` : isCancelled ? `
+                <span class="text-xs text-zinc-400">Cancelled</span>
               ` : `
-                <button onclick="quickCheckin('${b.booking_code}')" class="text-xs font-medium px-2.5 py-1 rounded bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-800 transition">
+                <button onclick="quickCheckin('${esc(b.booking_code)}')" class="text-xs font-medium px-2.5 py-1 rounded bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-800 transition">
                   Check in
                 </button>
               `}
@@ -894,6 +1344,7 @@
         const data = await res.json();
         showToast(data.message);
         fetchSessions();
+        fetchMyBookings();
       } catch (err) {
         showToast("Reset failed", true);
       }
