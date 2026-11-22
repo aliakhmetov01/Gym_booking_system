@@ -77,9 +77,11 @@ PostgreSQL-базу, которой одинаково пользуются и �
 ## 5. Подключить на Vercel
 
 1. Vercel → ваш проект → **Settings → Environment Variables**.
-2. Добавьте две переменные (Environment: Production, Preview, Development):
+2. Добавьте три переменные (тип **Secret**, Environment: Production, Preview, Development):
    * `DATABASE_URL` — та же строка, что в `.env`;
-   * `SECRET_KEY` — та же строка, что в `.env`.
+   * `SECRET_KEY` — та же строка, что в `.env`;
+   * `ADMIN_PASSWORD` — пароль админ-аккаунта `admin@gym.kz`, тот же, что в `.env`.
+     Без этой переменной админ на сайте не создаётся.
 3. **Deployments** → у последнего деплоя **⋯ → Redeploy**. Переменные применяются только
    к новому деплою.
 4. Откройте `https://<ваш-сайт>/api/health`. В поле `storage_engine` должно быть
@@ -87,7 +89,7 @@ PostgreSQL-базу, которой одинаково пользуются и �
 
 ## 6. Проверка
 
-1. Нажмите **Reset demo data** на вкладке Schedule. Это загрузит 16 тренировок и демо-бронь
+1. Войдите как админ (`admin@gym.kz`, пароль из `ADMIN_PASSWORD`) и нажмите **Reset demo data** на вкладке Schedule. Это загрузит 16 тренировок и демо-бронь
    `BK-10101`. Аккаунты при сбросе не удаляются.
 2. Зарегистрируйтесь и забронируйте тренировку. В Supabase **Table Editor → bookings** должна
    появиться строка.

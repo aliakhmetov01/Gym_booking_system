@@ -92,8 +92,27 @@
 | **BR-04** | A member may hold at most **2 active (CONFIRMED) bookings** at the same time | `create_booking()` |
 | **BR-05** | A booking can be cancelled only **within 24 hours after it was made**; cancelling frees the seat | `cancel_booking()` |
 | **BR-06** | Only the owner can cancel a booking; cancelled bookings cannot be checked in | API + reception |
+| **BR-07** | Staff functions (reception, session management, backups, system, demo reset) are available only to the **admin** role | API `require_admin` (HTTP 403) + hidden UI tabs |
 
-Set the `SECRET_KEY` environment variable in production (Vercel → Settings → Environment Variables).
+### 🔥 Gamification: booking streak
+* Every booking gives the member **one flame** (`streak + 1`).
+* If the member makes **no new booking within 24 hours**, the streak is lost (back to 0).
+* A cancelled booking takes its flame back, so book/cancel cannot be used to farm flames.
+* The header shows the current streak; the profile shows the streak, the personal best and the time left to keep it.
+* Why it matters: it rewards regular training, the main reason gym members drop out is irregular attendance.
+
+### 👮 Roles
+| Role | Sees | Account |
+| :--- | :--- | :--- |
+| Guest | Schedule only | — |
+| Member | Schedule, My Bookings | Sign up, or demo `demo@gym.kz` / `demo1234` |
+| Admin | Everything: Reception, Sessions (create new sessions), Backups, System, demo reset, overbooking test | `admin@gym.kz`, password from `ADMIN_PASSWORD` |
+
+The admin account is created automatically. Its password comes from the `ADMIN_PASSWORD` environment variable;
+only a purely local SQLite setup without that variable falls back to `admin1234`. On a public deployment
+without `ADMIN_PASSWORD` no admin is created, so there is never a guessable admin login.
+
+Set `SECRET_KEY` and `ADMIN_PASSWORD` in production (Vercel → Settings → Environment Variables).
 For a persistent cloud database see [supabase/SUPABASE_SETUP.md](supabase/SUPABASE_SETUP.md).
 
 ---
@@ -128,8 +147,14 @@ Open your browser at: **`http://localhost:5000`**
 4. **Result:** Booking succeeds instantly. A confirmation ticket appears displaying your **unique booking code (e.g. `BK-88707`) and a scannable QR code**.
 5. Close the ticket: the free seats on `SES-102` decreased by 1 and the card shows *You're booked*.
 
+### Test Case 1b: Booking Streak (Gamification)
+1. After Test Case 1 the header shows **🔥 1** and the ticket says *+1 flame*.
+2. Book a second session: the streak becomes **🔥 2** (*personal best*).
+3. Open **My Bookings**: the streak card shows the time left to keep the streak (24 hours from the last booking).
+
 ### Test Case 2: Overbooking Prevention (FR-03 & TC-01)
-1. In the schedule, locate session **`SES-106` (Boxing Sparring & Technique)**, shown as `8/8 booked • Full`.
+1. Log in as the **admin**. In the schedule, locate session **`SES-106` (Boxing Sparring & Technique)**, shown as `8/8 booked • Full`.
+   (Members simply see a disabled *Fully booked* button.)
 2. Click the red button **"Full (Test Overbooking)"** and submit the booking.
 3. **Result:** The system strictly rejects the request:  
    *`"Session SES-106 is fully booked (8/8 places taken). Acceptance criteria FR-03 enforced."`*
@@ -143,19 +168,24 @@ Open your browser at: **`http://localhost:5000`**
 1. Open **My Bookings** and click **Cancel** on a fresh booking. It becomes `CANCELLED` and the seat is released.
 2. The demo booking `BK-10101` becomes non-cancellable 24 hours after the seed was created (*Cancel window closed*).
 
+### Test Case 2d: Role-Based Access (BR-07)
+1. Logged in as a member: only **Schedule** and **My Bookings** are visible.
+2. Log out and log in as **admin**: **Reception, Sessions, Backups, System** appear, plus an *Admin* badge.
+3. In **Sessions** create `SES-150` — it appears in the schedule immediately.
+
 ### Test Case 3: Reception Desk Check-in (Week 5)
-1. Switch to the **"2. Reception Desk"** tab.
-2. Enter the booking code from Test Case 1 into the input field and click **"Confirm Check-in"**.
+1. As admin, switch to the **Reception** tab.
+2. Enter the booking code from Test Case 1 into the input field and click **"Check in"**.
 3. **Result:** Member status changes from `CONFIRMED` to `CHECKED_IN` (green badge).
 
 ### Test Case 4: Automatic Data Backup (Week 6)
-1. Switch to the **"4. Security & Backup"** tab.
-2. Click **"Create Snapshot Backup Now"**.
-3. **Result:** A physical copy of `gym.db` is generated with a timestamp in the `backups/` directory and logged in the audit table.
+1. As admin, switch to the **Backups** tab.
+2. Click **"Create Backup Now"**.
+3. **Result:** A snapshot is generated with a timestamp (SQLite copy locally, JSON export on Supabase) and logged in the audit table.
 
 ### Test Case 5: Architecture & Telecom Diagnostics (Week 10)
-1. Switch to the **"5. Architecture Map"** tab.
-2. Review real-time roundtrip database latency (typically 1–3 ms) and protocol telemetry.
+1. As admin, switch to the **System** tab.
+2. Review real-time roundtrip database latency and protocol telemetry.
 
 ---
 

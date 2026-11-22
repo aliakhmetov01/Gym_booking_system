@@ -76,6 +76,48 @@ SESSION_COLS = """
 # Setup
 # =========================================================================
 
+# Columns added after the first version of supabase/schema.sql.
+# They are created automatically, so an existing Supabase database needs no manual SQL.
+USER_COLUMNS = {
+    "role": "text not null default 'member' check (role in ('member', 'admin'))",
+    "streak": "integer not null default 0",
+    "best_streak": "integer not null default 0",
+    "last_booking_at": "timestamptz",
+}
+
+
+def _migrate(cur):
+    cur.execute(
+        """SELECT column_name FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'users'"""
+    )
+    existing = {r["column_name"] for r in cur.fetchall()}
+    for column, ddl in USER_COLUMNS.items():
+        if column not in existing:
+            cur.execute(f"ALTER TABLE public.users ADD COLUMN {column} {ddl}")
+
+
+def _ensure_admin(cur):
+    """Creates the admin account or syncs its role/password with ADMIN_PASSWORD."""
+    pw = H._admin_password()
+    if not pw:
+        return   # no ADMIN_PASSWORD on a public deployment: never create a guessable admin
+    cur.execute("SELECT id, password_hash, role FROM users WHERE email = %s", (H.ADMIN_EMAIL,))
+    row = cur.fetchone()
+    if not row:
+        cur.execute(
+            """INSERT INTO users (full_name, email, phone, password_hash, role)
+               VALUES (%s, %s, '-', %s, 'admin')""",
+            (H.ADMIN_NAME, H.ADMIN_EMAIL, H.generate_password_hash(pw)),
+        )
+        return
+    if row["role"] != "admin":
+        cur.execute("UPDATE users SET role = 'admin' WHERE id = %s", (row["id"],))
+    if not H.check_password_hash(row["password_hash"], pw):
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                    (H.generate_password_hash(pw), row["id"]))
+
+
 def _ensure_demo_user(cur):
     cur.execute("SELECT id FROM users WHERE email = %s", (H.DEMO_USER["email"],))
     row = cur.fetchone()
@@ -118,7 +160,9 @@ def init_db(force_reseed=False):
         return
     with _init_lock:
         with _connect() as conn, conn.cursor() as cur:
+            _migrate(cur)
             demo_id = _ensure_demo_user(cur)
+            _ensure_admin(cur)
             if force_reseed:
                 cur.execute("DELETE FROM bookings")
                 cur.execute("DELETE FROM sessions")
@@ -153,10 +197,10 @@ def register_user(full_name, email, phone, password):
             cur.execute(
                 """INSERT INTO users (full_name, email, phone, password_hash)
                    VALUES (%s, %s, %s, %s)
-                   RETURNING id, full_name, email, phone, created_at""",
+                   RETURNING *""",
                 (full_name, email, phone, H.generate_password_hash(password)),
             )
-            return {"success": True, "user": _row(cur.fetchone())}
+            return {"success": True, "user": H._public_user(_row(cur.fetchone()))}
     except psycopg.errors.UniqueViolation:
         return {"success": False, "error": "An account with this email already exists."}
 
@@ -280,8 +324,15 @@ def create_booking(session_id, user_id):
             created_at = _to_str(cur.fetchone()["created_at"])
             cur.execute("UPDATE sessions SET booked_count = booked_count + 1 WHERE id = %s", (session_id,))
 
+            # Gamification: +1 flame, in the same transaction
+            cur.execute("SELECT streak, best_streak, last_booking_at FROM users WHERE id = %s FOR UPDATE",
+                        (user_id,))
+            streak, best = H._streak_after_booking(_row(cur.fetchone()))
+            cur.execute("UPDATE users SET streak = %s, best_streak = %s, last_booking_at = now() WHERE id = %s",
+                        (streak, best, user_id))
+
         remaining = session["capacity"] - (session["booked_count"] + 1)
-        return H._booking_result(booking_code, session, user, remaining, created_at)
+        return H._booking_result(booking_code, session, user, remaining, created_at, streak, best)
     except psycopg.errors.CheckViolation as e:       # raised by DB triggers / constraints
         return {"success": False, "error": _db_error_message(e)}
     except psycopg.errors.UniqueViolation:
@@ -327,6 +378,11 @@ def cancel_booking(booking_code, user_id):
                 "UPDATE sessions SET booked_count = booked_count - 1 WHERE id = %s AND booked_count > 0",
                 (b["session_id"],),
             )
+            # Gamification: the cancelled booking takes its flame back
+            cur.execute("SELECT streak, best_streak, last_booking_at FROM users WHERE id = %s FOR UPDATE",
+                        (user_id,))
+            cur.execute("UPDATE users SET streak = %s WHERE id = %s",
+                        (H._streak_after_cancel(_row(cur.fetchone())), user_id))
         return {"success": True, "message": f"Booking {code} for {b['session_code']} ({b['title']}) cancelled. The spot is free again."}
     except psycopg.errors.CheckViolation as e:
         return {"success": False, "error": _db_error_message(e)}

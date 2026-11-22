@@ -61,6 +61,17 @@ def require_auth(view):
     return wrapper
 
 
+def require_admin(view):
+    """Like require_auth, but only for accounts with role 'admin' (staff functions)."""
+    @require_auth
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        if g.user.get("role") != "admin":
+            return jsonify({"status": "error", "message": "Administrator access required."}), 403
+        return view(*args, **kwargs)
+    return wrapper
+
+
 class VercelPathFixMiddleware:
     """
     Ensures Flask sees the true original API route even when Vercel rewrites
@@ -144,6 +155,7 @@ def api_get_sessions():
 
 
 @app.route("/api/sessions", methods=["POST"])
+@require_admin
 def api_create_session():
     """Week 7 Data Governance: Enforce SES-### pattern and completeness."""
     data = request.get_json() or {}
@@ -270,6 +282,7 @@ def api_book_session():
 
 
 @app.route("/api/bookings", methods=["GET"])
+@require_admin
 def api_get_bookings():
     """Reception desk endpoint: retrieves all bookings."""
     bookings = database.get_all_bookings()
@@ -281,6 +294,7 @@ def api_get_bookings():
 
 
 @app.route("/api/checkin", methods=["POST"])
+@require_admin
 def api_checkin():
     """Week 5 Hardware workflow: check-in member by booking code / QR scan."""
     data = request.get_json() or {}
@@ -301,6 +315,7 @@ def api_checkin():
 
 
 @app.route("/api/backup", methods=["POST"])
+@require_admin
 def api_trigger_backup():
     """Week 6 Security Choice: Create physical snapshot backup."""
     data = request.get_json() or {}
@@ -318,6 +333,7 @@ def api_trigger_backup():
 
 
 @app.route("/api/backups", methods=["GET"])
+@require_admin
 def api_list_backups():
     """Returns backup audit logs."""
     logs = database.get_backups()
@@ -329,6 +345,7 @@ def api_list_backups():
 
 
 @app.route("/api/reset", methods=["POST"])
+@require_admin
 def api_reset_db():
     """Resets database to initial seed state for demo presentations."""
     database.init_db(force_reseed=True)

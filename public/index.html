@@ -40,20 +40,22 @@
           <button onclick="switchTab('sessions')" id="tab-btn-sessions" class="tab-btn px-3 py-1.5 text-sm font-medium rounded-md bg-zinc-900 text-white transition whitespace-nowrap">
             Schedule
           </button>
-          <button onclick="switchTab('reception')" id="tab-btn-reception" class="tab-btn px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
-            Reception
-          </button>
-          <button onclick="switchTab('admin')" id="tab-btn-admin" class="tab-btn px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
-            Sessions
-          </button>
-          <button onclick="switchTab('security')" id="tab-btn-security" class="tab-btn px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
-            Backups
-          </button>
-          <button onclick="switchTab('network')" id="tab-btn-network" class="tab-btn px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
-            System
-          </button>
+          <!-- Logged-in members -->
           <button onclick="switchTab('profile')" id="tab-btn-profile" class="tab-btn hidden px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
             My Bookings
+          </button>
+          <!-- Staff only (role = admin) -->
+          <button onclick="switchTab('reception')" id="tab-btn-reception" class="tab-btn admin-only hidden px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
+            Reception
+          </button>
+          <button onclick="switchTab('admin')" id="tab-btn-admin" class="tab-btn admin-only hidden px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
+            Sessions
+          </button>
+          <button onclick="switchTab('security')" id="tab-btn-security" class="tab-btn admin-only hidden px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
+            Backups
+          </button>
+          <button onclick="switchTab('network')" id="tab-btn-network" class="tab-btn admin-only hidden px-3 py-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-md transition whitespace-nowrap">
+            System
           </button>
         </nav>
 
@@ -76,9 +78,15 @@
 
           <!-- Logged in: profile chip -->
           <div id="auth-user" class="hidden items-center gap-1.5">
+            <!-- Gamification: booking streak -->
+            <button id="streak-chip" onclick="switchTab('profile')" class="flex items-center gap-1 px-2.5 py-1 rounded-full border text-sm font-semibold transition" title="Booking streak">
+              <span id="streak-flame" aria-hidden="true">🔥</span>
+              <span id="streak-count">0</span>
+            </button>
             <button onclick="switchTab('profile')" class="flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border border-zinc-200 hover:bg-zinc-50 transition" title="Open my profile">
               <span id="user-initials" class="w-6 h-6 rounded-full bg-zinc-900 text-white text-[11px] font-semibold flex items-center justify-center">--</span>
               <span id="user-first-name" class="text-sm font-medium text-zinc-800">--</span>
+              <span id="user-admin-badge" class="hidden text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Admin</span>
             </button>
             <button onclick="logout()" class="text-xs font-medium text-zinc-500 hover:text-zinc-900 px-2 py-1.5 rounded-md transition">
               Log out
@@ -106,7 +114,7 @@
           <button onclick="fetchSessions()" class="text-xs font-medium text-zinc-700 bg-white hover:bg-zinc-50 border border-zinc-300 px-3 py-1.5 rounded-md transition">
             Refresh
           </button>
-          <button onclick="resetDatabaseDemo()" class="text-xs font-medium text-zinc-600 bg-white hover:bg-zinc-50 border border-zinc-300 px-3 py-1.5 rounded-md transition">
+          <button onclick="resetDatabaseDemo()" class="admin-only hidden text-xs font-medium text-zinc-600 bg-white hover:bg-zinc-50 border border-zinc-300 px-3 py-1.5 rounded-md transition">
             Reset demo data
           </button>
         </div>
@@ -413,7 +421,20 @@
         </button>
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Streak card (gamification) -->
+        <div id="streak-card" class="rounded-lg border p-5 text-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-zinc-500">Booking streak</span>
+            <span class="text-[11px] text-zinc-400">Best: <strong id="profile-best-streak" class="text-zinc-700">0</strong></span>
+          </div>
+          <div class="flex items-center gap-2 mt-1">
+            <span id="profile-streak-flame" class="text-2xl leading-none" aria-hidden="true">🔥</span>
+            <span id="profile-streak" class="text-2xl font-bold text-zinc-900">0</span>
+          </div>
+          <p id="profile-streak-note" class="text-[11px] text-zinc-500 mt-2">Book a session to light your first flame.</p>
+        </div>
+
         <!-- Account card -->
         <div class="bg-white rounded-lg border border-zinc-200 p-5 flex items-start gap-4">
           <div id="profile-avatar" class="w-12 h-12 shrink-0 rounded-full bg-zinc-900 text-white font-semibold flex items-center justify-center">--</div>
@@ -443,6 +464,7 @@
           <div class="font-semibold text-zinc-900">Booking rules</div>
           <p><strong class="text-zinc-800">Limit:</strong> max <span class="rule-max">2</span> active bookings per member, so popular slots stay fair for everyone.</p>
           <p><strong class="text-zinc-800">Cancellation:</strong> free cancellation within <span class="rule-window">24</span> hours after booking. After that the booking is locked.</p>
+          <p><strong class="text-zinc-800">Streak:</strong> every booking adds one 🔥. No new booking within 24 hours resets the streak; a cancelled booking takes its flame back.</p>
         </div>
       </div>
 
@@ -571,6 +593,10 @@
       <h3 class="text-lg font-bold text-zinc-900">Booking Confirmed</h3>
       <p class="text-xs text-zinc-500 mt-1">Show this code at the reception desk.</p>
 
+      <div id="ticket-streak" class="no-print hidden mt-3 w-fit mx-auto items-center gap-1.5 px-3 py-1 rounded-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold">
+        <span aria-hidden="true">🔥</span><span id="ticket-streak-text">+1 flame</span>
+      </div>
+
       <div class="my-4 p-3 bg-white border border-zinc-200 rounded-md inline-block">
         <div id="qrcode-canvas" class="flex justify-center"></div>
       </div>
@@ -641,7 +667,23 @@
       if (dateInput) dateInput.value = today;
     });
 
+    const ADMIN_TABS = ['reception', 'admin', 'security', 'network'];
+
+    function isAdmin() {
+      return !!currentUser && currentUser.role === 'admin';
+    }
+
+    function currentTab() {
+      const visible = document.querySelector('.tab-content:not(.hidden)');
+      return visible ? visible.id.replace('tab-', '') : 'sessions';
+    }
+
     function switchTab(tabId) {
+      // Staff tabs are only for the admin; the profile only for logged-in members.
+      // (The API enforces the same rules, this just keeps the UI clean.)
+      if (ADMIN_TABS.includes(tabId) && !isAdmin()) tabId = 'sessions';
+      if (tabId === 'profile' && !currentUser) tabId = 'sessions';
+
       document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
       document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('bg-zinc-900', 'text-white');
@@ -709,7 +751,10 @@
       box.classList.add('flex');
       document.getElementById('user-initials').innerText = initials(user.full_name);
       document.getElementById('user-first-name').innerText = user.full_name.split(' ')[0];
+      document.getElementById('user-admin-badge').classList.toggle('hidden', user.role !== 'admin');
       document.getElementById('tab-btn-profile').classList.remove('hidden');
+      applyRoleUI();
+      setStreak(user);
       fetchMyBookings();
     }
 
@@ -722,9 +767,78 @@
       box.classList.add('hidden');
       box.classList.remove('flex');
       document.getElementById('tab-btn-profile').classList.add('hidden');
-      if (!document.getElementById('tab-profile').classList.contains('hidden')) switchTab('sessions');
+      applyRoleUI();
       if (currentSessions.length) renderSessions();
     }
+
+    // Shows staff controls only to the admin and leaves a hidden tab if needed
+    function applyRoleUI() {
+      const admin = isAdmin();
+      document.querySelectorAll('.admin-only').forEach(el => el.classList.toggle('hidden', !admin));
+      const tab = currentTab();
+      if ((ADMIN_TABS.includes(tab) && !admin) || (tab === 'profile' && !currentUser)) switchTab('sessions');
+      if (currentSessions.length) renderSessions();
+    }
+
+    // ---------------- STREAK (gamification) ----------------
+    let streakDeadline = null;   // client-side timestamp (ms) when the streak expires
+
+    function setStreak(data) {
+      if (!currentUser) return;
+      currentUser.streak = data.streak || 0;
+      currentUser.best_streak = data.best_streak || 0;
+      const secs = data.streak_seconds_left || 0;
+      streakDeadline = currentUser.streak > 0 && secs > 0 ? Date.now() + secs * 1000 : null;
+      renderStreak();
+    }
+
+    function formatTimeLeft(ms) {
+      const totalMin = Math.max(0, Math.floor(ms / 60000));
+      const h = Math.floor(totalMin / 60), m = totalMin % 60;
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+
+    function renderStreak() {
+      if (!currentUser) return;
+      let streak = currentUser.streak || 0;
+      if (streakDeadline && Date.now() > streakDeadline) { streak = 0; streakDeadline = null; currentUser.streak = 0; }
+      const alive = streak > 0;
+      const left = alive ? streakDeadline - Date.now() : 0;
+      const urgent = alive && left < 3 * 3600 * 1000;
+
+      const chip = document.getElementById('streak-chip');
+      chip.className = `flex items-center gap-1 px-2.5 py-1 rounded-full border text-sm font-semibold transition ${
+        alive ? (urgent ? 'bg-red-50 border-red-200 text-red-700' : 'bg-orange-50 border-orange-200 text-orange-700')
+              : 'bg-white border-zinc-200 text-zinc-400'
+      }`;
+      document.getElementById('streak-flame').style.filter = alive ? '' : 'grayscale(1)';
+      document.getElementById('streak-count').innerText = streak;
+      chip.title = alive
+        ? `Booking streak: ${streak}. Book again within ${formatTimeLeft(left)} to keep it.`
+        : 'No active streak. Book a session to light a flame.';
+
+      const card = document.getElementById('streak-card');
+      if (card) {
+        card.className = `rounded-lg border p-5 text-xs ${alive ? 'bg-orange-50 border-orange-200' : 'bg-white border-zinc-200'}`;
+        document.getElementById('profile-streak').innerText = streak;
+        document.getElementById('profile-best-streak').innerText = currentUser.best_streak || 0;
+        document.getElementById('profile-streak-flame').style.filter = alive ? '' : 'grayscale(1)';
+        const note = document.getElementById('profile-streak-note');
+        note.innerText = alive
+          ? `Book your next session within ${formatTimeLeft(left)} to keep the streak.`
+          : (currentUser.best_streak ? 'Streak lost. Book a session to start a new one.' : 'Book a session to light your first flame.');
+        note.className = `text-[11px] mt-2 ${urgent ? 'text-red-600 font-medium' : 'text-zinc-500'}`;
+      }
+    }
+
+    async function refreshMe() {
+      try {
+        const res = await apiRequest('/auth/me');
+        if (res.ok) setStreak((await res.json()).data);
+      } catch (e) { console.error(e); }
+    }
+
+    setInterval(renderStreak, 60000);   // keep the countdown fresh
 
     function logout() {
       applyLoggedOut();
@@ -904,6 +1018,7 @@
           showToast(data.message);
           fetchSessions();
           fetchMyBookings();
+          refreshMe();   // the cancelled booking takes its flame back
         } else {
           showToast(data.message, true);
           fetchMyBookings();
@@ -987,10 +1102,16 @@
             <button onclick="switchTab('profile')" class="w-full py-2 text-xs font-medium rounded-md bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 transition">
               You're booked &middot; ${esc(mine.booking_code)} (${esc(mine.status)})
             </button>`;
-        } else if (isFull) {
+        } else if (isFull && isAdmin()) {
+          // Staff demo of FR-03: the server must reject this booking
           actionHtml = `
             <button onclick="tryBookFullSession('${esc(s.session_code)}')" class="w-full py-2 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition">
               Full (Test Overbooking)
+            </button>`;
+        } else if (isFull) {
+          actionHtml = `
+            <button disabled class="w-full py-2 text-xs font-medium rounded-md bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed">
+              Fully booked
             </button>`;
         } else {
           actionHtml = `
@@ -1077,7 +1198,8 @@
 
         if (res.ok && data.status === 'success') {
           closeBookingModal();
-          showToast(`Booked: ${data.data.booking_code}`);
+          setStreak(data.data);
+          showToast(`Booked: ${data.data.booking_code} · 🔥 streak ${data.data.streak}`);
           fetchSessions();
           fetchMyBookings();
           openTicketModal(data.data);
@@ -1104,6 +1226,18 @@
       document.getElementById('ticket-member').innerText = bookingData.member_name;
       document.getElementById('ticket-session').innerText = `${bookingData.session.session_code} - ${bookingData.session.title}`;
       document.getElementById('ticket-datetime').innerText = `${bookingData.session.date} at ${bookingData.session.time}`;
+
+      // "+1 flame" badge only right after a new booking (not when reopening a ticket from the profile)
+      const streakBadge = document.getElementById('ticket-streak');
+      if (bookingData.streak) {
+        document.getElementById('ticket-streak-text').innerText =
+          `+1 flame · streak ${bookingData.streak}` + (bookingData.streak >= bookingData.best_streak && bookingData.streak > 1 ? ' · personal best!' : '');
+        streakBadge.classList.remove('hidden');
+        streakBadge.classList.add('flex');
+      } else {
+        streakBadge.classList.add('hidden');
+        streakBadge.classList.remove('flex');
+      }
 
       const qrContainer = document.getElementById('qrcode-canvas');
       qrContainer.innerHTML = '';

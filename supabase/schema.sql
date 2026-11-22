@@ -12,8 +12,16 @@ create table if not exists public.users (
   email         text        not null unique,
   phone         text        not null,
   password_hash text        not null,           -- werkzeug hash, never plain text
-  created_at    timestamptz not null default now()
+  created_at    timestamptz not null default now(),
+  role          text        not null default 'member' check (role in ('member', 'admin')),
+  -- Gamification: +1 per booking, resets if no booking within 24 hours
+  streak          integer   not null default 0,
+  best_streak     integer   not null default 0,
+  last_booking_at timestamptz
 );
+-- Note: an existing database created with the first version of this file gets the
+-- role / streak columns automatically when the app starts (api/_pg.py -> _migrate).
+-- The admin account (admin@gym.kz) is created by the app from the ADMIN_PASSWORD variable.
 
 -- ---------- Training sessions (Week 7: SES-### rule) ----------
 create table if not exists public.sessions (

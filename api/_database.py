@@ -55,6 +55,24 @@ _load_dotenv()
 # ---- Business rules ----
 MAX_ACTIVE_BOOKINGS = 2
 CANCEL_WINDOW_HOURS = 24
+STREAK_WINDOW_HOURS = 24      # Gamification: book again within 24h or the streak resets
+
+# ---- Admin account ----
+# The admin is created automatically. Its password comes from the ADMIN_PASSWORD
+# environment variable; only a purely local SQLite setup falls back to a default.
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@gym.kz").strip().lower()
+ADMIN_NAME = "Administrator"
+LOCAL_DEFAULT_ADMIN_PASSWORD = "admin1234"
+_ADMIN_SYNCED = False
+
+
+def _admin_password():
+    pw = os.environ.get("ADMIN_PASSWORD", "").strip()
+    if pw:
+        return pw
+    if USE_SQLITE and not USE_POSTGRES:
+        return LOCAL_DEFAULT_ADMIN_PASSWORD
+    return None   # public deployment without ADMIN_PASSWORD: no admin is created
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -170,16 +188,57 @@ def validate_session_code(code: str) -> bool:
     return bool(re.match(r"^SES-\d{3}$", code.strip().upper()))
 
 
+def _parse_ts(value):
+    try:
+        return datetime.strptime(value, TS_FMT)
+    except (TypeError, ValueError):
+        return None
+
+
+def _streak_state(streak, best_streak, last_booking_at):
+    """Gamification: returns (current_streak, best_streak, expires_at_str).
+    One flame per booking; if no new booking within STREAK_WINDOW_HOURS the streak is lost."""
+    best = best_streak or 0
+    last = _parse_ts(last_booking_at)
+    if not last or not streak or streak <= 0:
+        return 0, best, None
+    expires = last + timedelta(hours=STREAK_WINDOW_HOURS)
+    if datetime.now() > expires:
+        return 0, best, None
+    return streak, best, expires.strftime(TS_FMT)
+
+
+def _streak_after_booking(user):
+    """New (streak, best_streak) after the member makes a booking."""
+    current, best, _ = _streak_state(user.get("streak"), user.get("best_streak"), user.get("last_booking_at"))
+    new_streak = current + 1
+    return new_streak, max(best, new_streak)
+
+
+def _streak_after_cancel(user):
+    """A cancelled booking takes its flame back (prevents book/cancel farming)."""
+    current, _, _ = _streak_state(user.get("streak"), user.get("best_streak"), user.get("last_booking_at"))
+    return max(0, current - 1)
+
+
 def _public_user(u):
     """Strips password hash before returning a user to the API layer."""
     if not u:
         return None
+    streak, best, expires = _streak_state(u.get("streak"), u.get("best_streak"), u.get("last_booking_at"))
     return {
         "id": u["id"],
         "full_name": u["full_name"],
         "email": u["email"],
         "phone": u["phone"],
         "created_at": u["created_at"],
+        "role": u.get("role") or "member",
+        "streak": streak,
+        "best_streak": best,
+        "streak_expires_at": expires,
+        # seconds instead of a clock time: the browser may be in another timezone than the server
+        "streak_seconds_left": int((_parse_ts(expires) - datetime.now()).total_seconds()) if expires else 0,
+        "streak_window_hours": STREAK_WINDOW_HOURS,
     }
 
 
@@ -209,6 +268,8 @@ def _validate_registration(full_name, email, phone, password):
         return "Full name must be at least 2 characters."
     if not EMAIL_RE.match(email):
         return "Please provide a valid email address."
+    if email == ADMIN_EMAIL:
+        return "This email is reserved. Please use another one."
     if len(re.sub(r"\D", "", phone)) < 6:
         return "Please provide a valid phone number."
     if len(password) < 6:
@@ -266,6 +327,30 @@ def _sqlite_ensure_demo_user(cursor):
     return cursor.lastrowid
 
 
+def _sqlite_ensure_admin(cursor):
+    """Creates the admin account, or (once per process) syncs its role and password."""
+    global _ADMIN_SYNCED
+    if _ADMIN_SYNCED:
+        return
+    pw = _admin_password()
+    if not pw:
+        return
+    cursor.execute("SELECT id, password_hash, role FROM users WHERE email = ?", (ADMIN_EMAIL,))
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("""
+            INSERT INTO users (full_name, email, phone, password_hash, created_at, role)
+            VALUES (?, ?, ?, ?, ?, 'admin')
+        """, (ADMIN_NAME, ADMIN_EMAIL, "-", generate_password_hash(pw), _now_str()))
+    else:
+        if row["role"] != "admin":
+            cursor.execute("UPDATE users SET role = 'admin' WHERE id = ?", (row["id"],))
+        if not check_password_hash(row["password_hash"], pw):
+            cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                           (generate_password_hash(pw), row["id"]))
+    _ADMIN_SYNCED = True
+
+
 def _sqlite_init_schema(conn, force_reseed=False):
     cursor = conn.cursor()
     cursor.execute("""
@@ -275,7 +360,11 @@ def _sqlite_init_schema(conn, force_reseed=False):
         email TEXT UNIQUE NOT NULL,
         phone TEXT NOT NULL,
         password_hash TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin')),
+        streak INTEGER NOT NULL DEFAULT 0,
+        best_streak INTEGER NOT NULL DEFAULT 0,
+        last_booking_at TEXT
     );
     """)
     cursor.execute("""
@@ -325,7 +414,19 @@ def _sqlite_init_schema(conn, force_reseed=False):
     if "cancelled_at" not in cols:
         cursor.execute("ALTER TABLE bookings ADD COLUMN cancelled_at TEXT")
 
+    # Migration for databases created before roles / gamification existed
+    user_cols = {r["name"] for r in cursor.execute("PRAGMA table_info(users)").fetchall()}
+    if "role" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member'")
+    if "streak" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN streak INTEGER NOT NULL DEFAULT 0")
+    if "best_streak" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN best_streak INTEGER NOT NULL DEFAULT 0")
+    if "last_booking_at" not in user_cols:
+        cursor.execute("ALTER TABLE users ADD COLUMN last_booking_at TEXT")
+
     demo_id = _sqlite_ensure_demo_user(cursor)
+    _sqlite_ensure_admin(cursor)
     conn.commit()
 
     cursor.execute("SELECT COUNT(*) as cnt FROM sessions")
@@ -367,6 +468,9 @@ def _sqlite_init_schema(conn, force_reseed=False):
 _MEMORY_FALLBACK = None
 
 
+USER_DEFAULTS = {"role": "member", "streak": 0, "best_streak": 0, "last_booking_at": None}
+
+
 def _json_demo_user_record(user_id=1):
     return {
         "id": user_id,
@@ -375,7 +479,41 @@ def _json_demo_user_record(user_id=1):
         "phone": DEMO_USER["phone"],
         "password_hash": generate_password_hash(DEMO_USER["password"]),
         "created_at": _now_str(),
+        **USER_DEFAULTS,
     }
+
+
+def _json_ensure_admin(store):
+    """Creates the admin account, or (once per process) syncs its role and password."""
+    global _ADMIN_SYNCED
+    pw = _admin_password()
+    if not pw:
+        return False
+    admin = next((u for u in store["users"] if u["email"] == ADMIN_EMAIL), None)
+    if admin is None:
+        store["users"].append({
+            "id": max((u["id"] for u in store["users"]), default=0) + 1,
+            "full_name": ADMIN_NAME,
+            "email": ADMIN_EMAIL,
+            "phone": "-",
+            "password_hash": generate_password_hash(pw),
+            "created_at": _now_str(),
+            **USER_DEFAULTS,
+            "role": "admin",
+        })
+        _ADMIN_SYNCED = True
+        return True
+    if _ADMIN_SYNCED:
+        return False
+    changed = False
+    if admin.get("role") != "admin":
+        admin["role"] = "admin"
+        changed = True
+    if not check_password_hash(admin["password_hash"], pw):
+        admin["password_hash"] = generate_password_hash(pw)
+        changed = True
+    _ADMIN_SYNCED = True
+    return changed
 
 
 def _json_create_seed_store(users=None):
@@ -427,6 +565,13 @@ def _json_migrate(store):
         next_id = max((u["id"] for u in store["users"]), default=0) + 1
         store["users"].append(_json_demo_user_record(next_id))
         changed = True
+    for u in store["users"]:
+        for key, default in USER_DEFAULTS.items():
+            if key not in u:
+                u[key] = default
+                changed = True
+    if _json_ensure_admin(store):
+        changed = True
     demo_id = next(u["id"] for u in store["users"] if u["email"] == DEMO_USER["email"])
     for b in store.get("bookings", []):
         if "user_id" not in b:
@@ -454,6 +599,7 @@ def _json_load_store():
 
     if data is None:
         data = _json_create_seed_store()
+        _json_migrate(data)          # adds the admin account
         _json_save_store(data)
         return data
 
@@ -520,8 +666,8 @@ def register_user(full_name: str, email: str, phone: str, password: str):
             """, (full_name, email, phone, pw_hash, now_ts))
             conn.commit()
             user = {"id": cur.lastrowid, "full_name": full_name, "email": email,
-                    "phone": phone, "created_at": now_ts}
-            return {"success": True, "user": user}
+                    "phone": phone, "created_at": now_ts, **USER_DEFAULTS}
+            return {"success": True, "user": _public_user(user)}
         except sqlite3.IntegrityError:
             return {"success": False, "error": "An account with this email already exists."}
         finally:
@@ -538,6 +684,7 @@ def register_user(full_name: str, email: str, phone: str, password: str):
             "phone": phone,
             "password_hash": pw_hash,
             "created_at": now_ts,
+            **USER_DEFAULTS,
         }
         store["users"].append(user)
         _json_save_store(store)
@@ -624,8 +771,13 @@ def get_session_by_id(session_id: int):
 
 # ---------------------------- Bookings ----------------------------------
 
-def _booking_result(booking_code, session, user, remaining_free, now_ts):
+def _booking_result(booking_code, session, user, remaining_free, now_ts, streak=0, best_streak=0):
+    expires = _parse_ts(now_ts) + timedelta(hours=STREAK_WINDOW_HOURS) if _parse_ts(now_ts) else None
     return {
+        "streak": streak,
+        "best_streak": best_streak,
+        "streak_expires_at": expires.strftime(TS_FMT) if expires else None,
+        "streak_seconds_left": STREAK_WINDOW_HOURS * 3600 if expires else 0,
         "success": True,
         "booking_code": booking_code,
         "session": {
@@ -698,9 +850,15 @@ def create_booking(session_id: int, user_id: int):
             """, (booking_code, session_id, user_id, user["full_name"], user["phone"], now_ts))
 
             cur.execute("UPDATE sessions SET booked_count = booked_count + 1 WHERE id = ?", (session_id,))
+
+            # Gamification: +1 flame (re-read inside the transaction)
+            cur.execute("SELECT streak, best_streak, last_booking_at FROM users WHERE id = ?", (user_id,))
+            streak, best = _streak_after_booking(dict(cur.fetchone()))
+            cur.execute("UPDATE users SET streak = ?, best_streak = ?, last_booking_at = ? WHERE id = ?",
+                        (streak, best, now_ts, user_id))
             conn.commit()
             remaining = session["capacity"] - (session["booked_count"] + 1)
-            return _booking_result(booking_code, session, user, remaining, now_ts)
+            return _booking_result(booking_code, session, user, remaining, now_ts, streak, best)
         except Exception as e:
             conn.rollback()
             return {"success": False, "error": f"Booking transaction failed: {str(e)}"}
@@ -744,8 +902,14 @@ def create_booking(session_id: int, user_id: int):
             "cancelled_at": None,
         })
         session["booked_count"] += 1
+
+        # Gamification: +1 flame
+        stored_user = next(u for u in store["users"] if u["id"] == user_id)
+        streak, best = _streak_after_booking(stored_user)
+        stored_user.update({"streak": streak, "best_streak": best, "last_booking_at": now_ts})
         _json_save_store(store)
-        return _booking_result(booking_code, session, user, session["capacity"] - session["booked_count"], now_ts)
+        return _booking_result(booking_code, session, user, session["capacity"] - session["booked_count"],
+                               now_ts, streak, best)
 
 
 def _decorate_user_booking(b):
@@ -829,6 +993,10 @@ def cancel_booking(booking_code: str, user_id: int):
                         (_now_str(), b["id"]))
             cur.execute("UPDATE sessions SET booked_count = booked_count - 1 WHERE id = ? AND booked_count > 0",
                         (b["session_id"],))
+            # Gamification: the cancelled booking takes its flame back
+            cur.execute("SELECT streak, best_streak, last_booking_at FROM users WHERE id = ?", (user_id,))
+            cur.execute("UPDATE users SET streak = ? WHERE id = ?",
+                        (_streak_after_cancel(dict(cur.fetchone())), user_id))
             conn.commit()
             return {"success": True, "message": f"Booking {code} for {b['session_code']} ({b['title']}) cancelled. The spot is free again."}
         except Exception as e:
@@ -853,6 +1021,9 @@ def cancel_booking(booking_code: str, user_id: int):
         session = next((s for s in store["sessions"] if s["id"] == b["session_id"]), None)
         if session and session["booked_count"] > 0:
             session["booked_count"] -= 1
+        stored_user = next((u for u in store["users"] if u["id"] == user_id), None)
+        if stored_user:
+            stored_user["streak"] = _streak_after_cancel(stored_user)
         _json_save_store(store)
         label = f"{session['session_code']} ({session['title']})" if session else ""
         return {"success": True, "message": f"Booking {code} for {label} cancelled. The spot is free again."}
