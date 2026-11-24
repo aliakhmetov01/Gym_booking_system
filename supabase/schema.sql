@@ -50,8 +50,22 @@ create table if not exists public.bookings (
   status       text        not null default 'CONFIRMED'
                            check (status in ('CONFIRMED', 'CHECKED_IN', 'CANCELLED')),
   created_at   timestamptz not null default now(),
-  cancelled_at timestamptz
+  cancelled_at timestamptz,
+  source       text        not null default 'DIRECT'   -- 'WAITLIST' = spot given automatically from the queue
+                           check (source in ('DIRECT', 'WAITLIST'))
 );
+
+-- ---------- Smart waitlist: queue for full sessions (first come, first served) ----------
+create table if not exists public.waitlist (
+  id         bigint generated always as identity primary key,
+  session_id bigint      not null references public.sessions(id) on delete cascade,
+  user_id    bigint      not null references public.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (session_id, user_id)
+);
+create index if not exists waitlist_queue_idx on public.waitlist (session_id, created_at, id);
+-- (An existing database gets bookings.source and the waitlist table automatically
+--  when the app starts: api/_pg.py -> _migrate.)
 
 -- One active booking per member per session
 create unique index if not exists bookings_one_active_per_session
@@ -130,6 +144,7 @@ alter table public.users       enable row level security;
 alter table public.sessions    enable row level security;
 alter table public.bookings    enable row level security;
 alter table public.backup_logs enable row level security;
+alter table public.waitlist    enable row level security;
 
 -- =====================================================================
 -- Seed data (demo account password: demo1234)

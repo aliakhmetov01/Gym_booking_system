@@ -17,7 +17,7 @@ import json
 import random
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -51,6 +51,21 @@ def _load_dotenv():
 
 
 _load_dotenv()
+
+# ---- Application timezone ----
+# Kazakhstan uses UTC+5 all year (no daylight saving). Vercel servers run in UTC, so
+# "now" is always taken in this fixed zone: booking times, the 24h windows and
+# quiet hours are then correct no matter where the server runs.
+try:
+    APP_UTC_OFFSET_HOURS = float(os.environ.get("APP_UTC_OFFSET", "5"))
+except ValueError:
+    APP_UTC_OFFSET_HOURS = 5.0
+APP_TZ = timezone(timedelta(hours=APP_UTC_OFFSET_HOURS))
+
+
+def _now():
+    """Current local time of the gym (naive datetime in APP_TZ)."""
+    return datetime.now(APP_TZ).replace(tzinfo=None)
 
 # ---- Business rules ----
 MAX_ACTIVE_BOOKINGS = 2
@@ -87,7 +102,7 @@ DEMO_USER = {
 
 
 def _now_str():
-    return datetime.now().strftime(TS_FMT)
+    return _now().strftime(TS_FMT)
 
 
 def _detect_storage_paths():
@@ -148,8 +163,8 @@ def get_storage_engine_name():
 
 def _build_seed_data():
     """Builds the 16 default training sessions (No Yoga) and sample booking."""
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    today_str = _now().strftime("%Y-%m-%d")
+    tomorrow_str = (_now() + timedelta(days=1)).strftime("%Y-%m-%d")
     now_timestamp = _now_str()
 
     raw_sessions = [
@@ -176,6 +191,9 @@ def _build_seed_data():
         ("SES-114", "Boxing Tactical Drill", "Alexey Smirnov", tomorrow_str, "16:00", 10, 3, "Boxing"),
         ("SES-115", "CrossFit Team Challenge", "Daniyar Bolat", tomorrow_str, "18:30", 14, 4, "CrossFit"),
         ("SES-116", "Pilates Balance & Posture", "Aruzhan Sadykova", tomorrow_str, "20:00", 15, 3, "Pilates"),
+
+        # --- 1-on-1 slot (capacity 1): fills after one booking, shows the waitlist; 14:00 = quiet hours ---
+        ("SES-117", "Personal Training 1-on-1", "Timur Aliyev", tomorrow_str, "14:00", 1, 0, "Strength"),
     ]
 
     return raw_sessions, now_timestamp
@@ -203,7 +221,7 @@ def _streak_state(streak, best_streak, last_booking_at):
     if not last or not streak or streak <= 0:
         return 0, best, None
     expires = last + timedelta(hours=STREAK_WINDOW_HOURS)
-    if datetime.now() > expires:
+    if _now() > expires:
         return 0, best, None
     return streak, best, expires.strftime(TS_FMT)
 
@@ -237,7 +255,7 @@ def _public_user(u):
         "best_streak": best,
         "streak_expires_at": expires,
         # seconds instead of a clock time: the browser may be in another timezone than the server
-        "streak_seconds_left": int((_parse_ts(expires) - datetime.now()).total_seconds()) if expires else 0,
+        "streak_seconds_left": int((_parse_ts(expires) - _now()).total_seconds()) if expires else 0,
         "streak_window_hours": STREAK_WINDOW_HOURS,
     }
 
@@ -259,6 +277,12 @@ LEVELS = [
     {"key": "athlete", "name": "Athlete", "icon": "🏆", "min_xp": 300},
 ]
 
+# Quiet hours: the least busy part of the day. Sessions that START in this window
+# give x2 XP (booking and attendance), nudging members away from the evening peak.
+QUIET_HOURS_START = 12
+QUIET_HOURS_END = 17
+QUIET_XP_MULTIPLIER = 2
+
 WORKOUT_CATEGORIES = ("CrossFit", "Boxing", "Strength", "Pilates", "HIIT Cardio")
 MORNING_BEFORE_HOUR = 12
 EARLY_BIRD_TARGET = 3
@@ -270,6 +294,11 @@ def _hour(time_str):
         return int(str(time_str).split(":")[0])
     except (TypeError, ValueError):
         return 99
+
+
+def xp_multiplier(session_time):
+    """x2 XP for sessions starting in quiet hours (12:00-16:59), x1 otherwise."""
+    return QUIET_XP_MULTIPLIER if QUIET_HOURS_START <= _hour(session_time) < QUIET_HOURS_END else 1
 
 
 def _badge(badge_id, name, icon, description, value, target):
@@ -304,7 +333,14 @@ def compute_progress(bookings, best_streak=0):
                morning, EARLY_BIRD_TARGET),
     ]
     unlocked = sum(1 for b in badges if b["unlocked"])
-    xp = len(active) * XP_PER_BOOKING + attended * XP_PER_ATTENDANCE + unlocked * XP_PER_BADGE
+    xp = unlocked * XP_PER_BADGE
+    quiet = 0
+    for b in active:
+        mult = xp_multiplier(b.get("session_time"))
+        quiet += 1 if mult > 1 else 0
+        xp += XP_PER_BOOKING * mult
+        if b.get("status") == "CHECKED_IN":
+            xp += XP_PER_ATTENDANCE * mult
 
     idx = max(i for i, lvl in enumerate(LEVELS) if xp >= lvl["min_xp"])
     level = LEVELS[idx]
@@ -326,9 +362,10 @@ def compute_progress(bookings, best_streak=0):
         "badges": badges,
         "badges_unlocked": unlocked,
         "stats": {"workouts": len(active), "attended": attended,
-                  "types_tried": len(categories), "morning": morning},
+                  "types_tried": len(categories), "morning": morning, "quiet_hours": quiet},
         "rules": {"xp_per_booking": XP_PER_BOOKING, "xp_per_attendance": XP_PER_ATTENDANCE,
-                  "xp_per_badge": XP_PER_BADGE},
+                  "xp_per_badge": XP_PER_BADGE, "quiet_hours_start": QUIET_HOURS_START,
+                  "quiet_hours_end": QUIET_HOURS_END, "quiet_xp_multiplier": QUIET_XP_MULTIPLIER},
     }
 
 
@@ -345,7 +382,7 @@ def _cancel_info(status: str, created_at: str):
     try:
         created = datetime.strptime(created_at, TS_FMT)
     except (TypeError, ValueError):
-        created = datetime.now()
+        created = _now()
     deadline = created + timedelta(hours=CANCEL_WINDOW_HOURS)
     deadline_str = deadline.strftime(TS_FMT)
 
@@ -353,7 +390,7 @@ def _cancel_info(status: str, created_at: str):
         return deadline_str, False, "Booking is already cancelled."
     if status == "CHECKED_IN":
         return deadline_str, False, "Member has already checked in."
-    if datetime.now() > deadline:
+    if _now() > deadline:
         return deadline_str, False, (
             f"Cancellation window closed. Bookings can be cancelled only within "
             f"{CANCEL_WINDOW_HOURS} hours after booking (deadline was {deadline_str})."
@@ -490,8 +527,21 @@ def _sqlite_init_schema(conn, force_reseed=False):
         status TEXT NOT NULL DEFAULT 'CONFIRMED',
         created_at TEXT NOT NULL,
         cancelled_at TEXT,
+        source TEXT NOT NULL DEFAULT 'DIRECT',
         FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
+    );
+    """)
+    # Waitlist: queue of members for a full session (first come, first served)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS waitlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (session_id, user_id),
+        FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
     """)
     cursor.execute("""
@@ -511,6 +561,8 @@ def _sqlite_init_schema(conn, force_reseed=False):
         cursor.execute("ALTER TABLE bookings ADD COLUMN user_id INTEGER REFERENCES users(id)")
     if "cancelled_at" not in cols:
         cursor.execute("ALTER TABLE bookings ADD COLUMN cancelled_at TEXT")
+    if "source" not in cols:
+        cursor.execute("ALTER TABLE bookings ADD COLUMN source TEXT NOT NULL DEFAULT 'DIRECT'")
 
     # Migration for databases created before roles / gamification existed
     user_cols = {r["name"] for r in cursor.execute("PRAGMA table_info(users)").fetchall()}
@@ -530,6 +582,7 @@ def _sqlite_init_schema(conn, force_reseed=False):
     cursor.execute("SELECT COUNT(*) as cnt FROM sessions")
     if cursor.fetchone()["cnt"] == 0 or force_reseed:
         if force_reseed:
+            cursor.execute("DELETE FROM waitlist")
             cursor.execute("DELETE FROM bookings")
             cursor.execute("DELETE FROM sessions")
 
@@ -648,9 +701,10 @@ def _json_create_seed_store(users=None):
             "status": "CONFIRMED",
             "created_at": now_ts,
             "cancelled_at": None,
+            "source": "DIRECT",
         }
     ]
-    return {"users": users, "sessions": sessions, "bookings": bookings, "backup_logs": []}
+    return {"users": users, "sessions": sessions, "bookings": bookings, "waitlist": [], "backup_logs": []}
 
 
 def _json_migrate(store):
@@ -676,7 +730,11 @@ def _json_migrate(store):
             b["user_id"] = demo_id if b["booking_code"] == "BK-10101" else None
             changed = True
         b.setdefault("cancelled_at", None)
+        b.setdefault("source", "DIRECT")
     store.setdefault("backup_logs", [])
+    if "waitlist" not in store:
+        store["waitlist"] = []
+        changed = True
     return changed
 
 
@@ -825,7 +883,8 @@ def get_all_sessions():
         cur.execute("""
             SELECT id, session_code, title, trainer, session_date, session_time,
                    capacity, booked_count, (capacity - booked_count) AS free_places,
-                   category, created_at
+                   category, created_at,
+                   (SELECT COUNT(*) FROM waitlist w WHERE w.session_id = sessions.id) AS waitlist_count
             FROM sessions
             ORDER BY session_date ASC, session_time ASC
         """)
@@ -839,6 +898,7 @@ def get_all_sessions():
         for s in store["sessions"]:
             item = dict(s)
             item["free_places"] = s["capacity"] - s["booked_count"]
+            item["waitlist_count"] = sum(1 for w in store["waitlist"] if w["session_id"] == s["id"])
             rows.append(item)
         rows.sort(key=lambda x: (x["session_date"], x["session_time"]))
         return rows
@@ -954,6 +1014,7 @@ def create_booking(session_id: int, user_id: int):
             streak, best = _streak_after_booking(dict(cur.fetchone()))
             cur.execute("UPDATE users SET streak = ?, best_streak = ?, last_booking_at = ? WHERE id = ?",
                         (streak, best, now_ts, user_id))
+            cur.execute("DELETE FROM waitlist WHERE session_id = ? AND user_id = ?", (session_id, user_id))
             conn.commit()
             remaining = session["capacity"] - (session["booked_count"] + 1)
             return _booking_result(booking_code, session, user, remaining, now_ts, streak, best)
@@ -998,8 +1059,11 @@ def create_booking(session_id: int, user_id: int):
             "status": "CONFIRMED",
             "created_at": now_ts,
             "cancelled_at": None,
+            "source": "DIRECT",
         })
         session["booked_count"] += 1
+        store["waitlist"] = [w for w in store["waitlist"]
+                             if not (w["session_id"] == session_id and w["user_id"] == user_id)]
 
         # Gamification: +1 flame
         stored_user = next(u for u in store["users"] if u["id"] == user_id)
@@ -1024,7 +1088,7 @@ def get_user_bookings(user_id: int):
         conn = _sqlite_get_conn()
         cur = conn.cursor()
         cur.execute("""
-            SELECT b.id, b.booking_code, b.status, b.created_at, b.cancelled_at,
+            SELECT b.id, b.booking_code, b.status, b.created_at, b.cancelled_at, b.source,
                    s.id AS session_id, s.session_code, s.title AS session_title, s.trainer,
                    s.category, s.session_date, s.session_time
             FROM bookings b
@@ -1050,6 +1114,7 @@ def get_user_bookings(user_id: int):
                 "status": b["status"],
                 "created_at": b["created_at"],
                 "cancelled_at": b.get("cancelled_at"),
+                "source": b.get("source", "DIRECT"),
                 "session_id": b["session_id"],
                 "session_code": s.get("session_code", ""),
                 "session_title": s.get("title", ""),
@@ -1095,8 +1160,11 @@ def cancel_booking(booking_code: str, user_id: int):
             cur.execute("SELECT streak, best_streak, last_booking_at FROM users WHERE id = ?", (user_id,))
             cur.execute("UPDATE users SET streak = ? WHERE id = ?",
                         (_streak_after_cancel(dict(cur.fetchone())), user_id))
+            # Waitlist: the freed spot goes to the first member in the queue
+            promoted = _sqlite_promote_from_waitlist(cur, b["session_id"])
             conn.commit()
-            return {"success": True, "message": f"Booking {code} for {b['session_code']} ({b['title']}) cancelled. The spot is free again."}
+            return {"success": True, "promoted": bool(promoted),
+                    "message": _cancel_message(code, b["session_code"], b["title"], promoted)}
         except Exception as e:
             conn.rollback()
             return {"success": False, "error": f"Cancellation failed: {str(e)}"}
@@ -1122,9 +1190,237 @@ def cancel_booking(booking_code: str, user_id: int):
         stored_user = next((u for u in store["users"] if u["id"] == user_id), None)
         if stored_user:
             stored_user["streak"] = _streak_after_cancel(stored_user)
+        promoted = _json_promote_from_waitlist(store, b["session_id"])
         _json_save_store(store)
-        label = f"{session['session_code']} ({session['title']})" if session else ""
-        return {"success": True, "message": f"Booking {code} for {label} cancelled. The spot is free again."}
+        return {"success": True, "promoted": bool(promoted),
+                "message": _cancel_message(code, session["session_code"] if session else "",
+                                           session["title"] if session else "", promoted)}
+
+
+# ---------------------------- Waitlist ----------------------------------
+# A member can queue for a FULL session. When someone cancels, the freed spot is
+# automatically turned into a booking for the first eligible member in the queue
+# (first come, first served). Members at the 2-booking limit keep their place but
+# are skipped until they have a free slot.
+
+def _cancel_message(code, session_code, title, promoted):
+    base = f"Booking {code} for {session_code} ({title}) cancelled."
+    if promoted:
+        return base + " The spot went to the next member on the waitlist."
+    return base + " The spot is free again."
+
+
+def _waitlist_join_checks(session, already_booked, position_if_queued):
+    if not session:
+        return "Training session not found."
+    if session["booked_count"] < session["capacity"]:
+        return "This session still has free spots. Book it directly."
+    if already_booked:
+        return "You already have a booking for this session."
+    if position_if_queued:
+        return f"You are already on the waitlist for this session (#{position_if_queued})."
+    return None
+
+
+def _waitlist_join_result(session, position, queue_size, active_count):
+    msg = f"You joined the waitlist for {session['session_code']} ({session['title']}). Your place: #{position}."
+    if active_count >= MAX_ACTIVE_BOOKINGS:
+        msg += (f" Note: you have {active_count} active bookings, so you will get the spot only "
+                f"after you have fewer than {MAX_ACTIVE_BOOKINGS}.")
+    return {"success": True, "message": msg, "position": position, "queue_size": queue_size}
+
+
+def _sqlite_promote_from_waitlist(cur, session_id):
+    """Inside an open transaction: gives a freed spot to the first eligible member in the queue."""
+    cur.execute("SELECT id, capacity, booked_count FROM sessions WHERE id = ?", (session_id,))
+    session = cur.fetchone()
+    if not session or session["booked_count"] >= session["capacity"]:
+        return None
+    cur.execute("SELECT id, user_id FROM waitlist WHERE session_id = ? ORDER BY created_at, id", (session_id,))
+    for entry in cur.fetchall():
+        uid = entry["user_id"]
+        cur.execute("SELECT id, full_name, phone, streak, best_streak, last_booking_at FROM users WHERE id = ?", (uid,))
+        user = cur.fetchone()
+        cur.execute("SELECT 1 FROM bookings WHERE session_id = ? AND user_id = ? AND status != 'CANCELLED'",
+                    (session_id, uid))
+        if not user or cur.fetchone():
+            cur.execute("DELETE FROM waitlist WHERE id = ?", (entry["id"],))
+            continue
+        cur.execute("SELECT COUNT(*) AS cnt FROM bookings WHERE user_id = ? AND status = 'CONFIRMED'", (uid,))
+        if cur.fetchone()["cnt"] >= MAX_ACTIVE_BOOKINGS:
+            continue   # at the limit: keeps the place in the queue
+        cur.execute("SELECT booking_code FROM bookings")
+        code = _new_booking_code({r["booking_code"] for r in cur.fetchall()})
+        now_ts = _now_str()
+        cur.execute("""
+            INSERT INTO bookings (booking_code, session_id, user_id, member_name, member_phone, status, created_at, source)
+            VALUES (?, ?, ?, ?, ?, 'CONFIRMED', ?, 'WAITLIST')
+        """, (code, session_id, uid, user["full_name"], user["phone"], now_ts))
+        cur.execute("UPDATE sessions SET booked_count = booked_count + 1 WHERE id = ?", (session_id,))
+        streak, best = _streak_after_booking(dict(user))
+        cur.execute("UPDATE users SET streak = ?, best_streak = ?, last_booking_at = ? WHERE id = ?",
+                    (streak, best, now_ts, uid))
+        cur.execute("DELETE FROM waitlist WHERE id = ?", (entry["id"],))
+        return {"booking_code": code, "user_id": uid}
+    return None
+
+
+def _json_promote_from_waitlist(store, session_id):
+    session = next((s for s in store["sessions"] if s["id"] == session_id), None)
+    if not session or session["booked_count"] >= session["capacity"]:
+        return None
+    queue = sorted((w for w in store["waitlist"] if w["session_id"] == session_id),
+                   key=lambda w: (w["created_at"], w["id"]))
+    for entry in queue:
+        uid = entry["user_id"]
+        user = next((u for u in store["users"] if u["id"] == uid), None)
+        booked = any(b["session_id"] == session_id and b.get("user_id") == uid and b["status"] != "CANCELLED"
+                     for b in store["bookings"])
+        if not user or booked:
+            store["waitlist"].remove(entry)
+            continue
+        active = sum(1 for b in store["bookings"] if b.get("user_id") == uid and b["status"] == "CONFIRMED")
+        if active >= MAX_ACTIVE_BOOKINGS:
+            continue
+        code = _new_booking_code({b["booking_code"] for b in store["bookings"]})
+        now_ts = _now_str()
+        store["bookings"].append({
+            "id": max((b["id"] for b in store["bookings"]), default=0) + 1,
+            "booking_code": code,
+            "session_id": session_id,
+            "user_id": uid,
+            "member_name": user["full_name"],
+            "member_phone": user["phone"],
+            "status": "CONFIRMED",
+            "created_at": now_ts,
+            "cancelled_at": None,
+            "source": "WAITLIST",
+        })
+        session["booked_count"] += 1
+        streak, best = _streak_after_booking(user)
+        user.update({"streak": streak, "best_streak": best, "last_booking_at": now_ts})
+        store["waitlist"].remove(entry)
+        return {"booking_code": code, "user_id": uid}
+    return None
+
+
+def join_waitlist(session_id: int, user_id: int):
+    if USE_SQLITE:
+        conn = _sqlite_get_conn()
+        try:
+            conn.execute("BEGIN IMMEDIATE;")
+            cur = conn.cursor()
+            cur.execute("SELECT id, session_code, title, capacity, booked_count FROM sessions WHERE id = ?", (session_id,))
+            session = cur.fetchone()
+            cur.execute("SELECT 1 FROM bookings WHERE session_id = ? AND user_id = ? AND status != 'CANCELLED'",
+                        (session_id, user_id))
+            booked = cur.fetchone() is not None
+            cur.execute("SELECT user_id FROM waitlist WHERE session_id = ? ORDER BY created_at, id", (session_id,))
+            queue = [r["user_id"] for r in cur.fetchall()]
+            mine = queue.index(user_id) + 1 if user_id in queue else 0
+            err = _waitlist_join_checks(session, booked, mine)
+            if err:
+                conn.rollback()
+                return {"success": False, "error": err}
+            cur.execute("INSERT INTO waitlist (session_id, user_id, created_at) VALUES (?, ?, ?)",
+                        (session_id, user_id, _now_str()))
+            cur.execute("SELECT COUNT(*) AS cnt FROM bookings WHERE user_id = ? AND status = 'CONFIRMED'", (user_id,))
+            active = cur.fetchone()["cnt"]
+            conn.commit()
+            return _waitlist_join_result(session, len(queue) + 1, len(queue) + 1, active)
+        except Exception as e:
+            conn.rollback()
+            return {"success": False, "error": f"Could not join the waitlist: {str(e)}"}
+        finally:
+            conn.close()
+
+    with _STORE_LOCK:
+        store = _json_load_store()
+        session = next((s for s in store["sessions"] if s["id"] == session_id), None)
+        booked = any(b["session_id"] == session_id and b.get("user_id") == user_id and b["status"] != "CANCELLED"
+                     for b in store["bookings"])
+        queue = [w["user_id"] for w in sorted((w for w in store["waitlist"] if w["session_id"] == session_id),
+                                              key=lambda w: (w["created_at"], w["id"]))]
+        mine = queue.index(user_id) + 1 if user_id in queue else 0
+        err = _waitlist_join_checks(session, booked, mine)
+        if err:
+            return {"success": False, "error": err}
+        store["waitlist"].append({
+            "id": max((w["id"] for w in store["waitlist"]), default=0) + 1,
+            "session_id": session_id,
+            "user_id": user_id,
+            "created_at": _now_str(),
+        })
+        active = sum(1 for b in store["bookings"] if b.get("user_id") == user_id and b["status"] == "CONFIRMED")
+        _json_save_store(store)
+        return _waitlist_join_result(session, len(queue) + 1, len(queue) + 1, active)
+
+
+def leave_waitlist(session_id: int, user_id: int):
+    if USE_SQLITE:
+        conn = _sqlite_get_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM waitlist WHERE session_id = ? AND user_id = ?", (session_id, user_id))
+        removed = cur.rowcount
+        conn.commit()
+        conn.close()
+    else:
+        with _STORE_LOCK:
+            store = _json_load_store()
+            before = len(store["waitlist"])
+            store["waitlist"] = [w for w in store["waitlist"]
+                                 if not (w["session_id"] == session_id and w["user_id"] == user_id)]
+            removed = before - len(store["waitlist"])
+            _json_save_store(store)
+    if not removed:
+        return {"success": False, "error": "You are not on the waitlist for this session."}
+    return {"success": True, "message": "You left the waitlist."}
+
+
+def get_user_waitlist(user_id: int):
+    """Waitlist entries of one member with their place in each queue."""
+    if USE_SQLITE:
+        conn = _sqlite_get_conn()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT w.session_id, w.created_at AS joined_at,
+                   s.session_code, s.title AS session_title, s.trainer, s.category,
+                   s.session_date, s.session_time,
+                   (SELECT COUNT(*) FROM waitlist w2 WHERE w2.session_id = w.session_id
+                      AND (w2.created_at < w.created_at OR (w2.created_at = w.created_at AND w2.id <= w.id))) AS position,
+                   (SELECT COUNT(*) FROM waitlist w3 WHERE w3.session_id = w.session_id) AS queue_size
+            FROM waitlist w JOIN sessions s ON s.id = w.session_id
+            WHERE w.user_id = ?
+            ORDER BY s.session_date, s.session_time
+        """, (user_id,))
+        rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    with _STORE_LOCK:
+        store = _json_load_store()
+        sessions_by_id = {s["id"]: s for s in store["sessions"]}
+        rows = []
+        for w in store["waitlist"]:
+            if w["user_id"] != user_id:
+                continue
+            queue = sorted((x for x in store["waitlist"] if x["session_id"] == w["session_id"]),
+                           key=lambda x: (x["created_at"], x["id"]))
+            s = sessions_by_id.get(w["session_id"], {})
+            rows.append({
+                "session_id": w["session_id"],
+                "joined_at": w["created_at"],
+                "session_code": s.get("session_code", ""),
+                "session_title": s.get("title", ""),
+                "trainer": s.get("trainer", ""),
+                "category": s.get("category", ""),
+                "session_date": s.get("session_date", ""),
+                "session_time": s.get("session_time", ""),
+                "position": [x["id"] for x in queue].index(w["id"]) + 1,
+                "queue_size": len(queue),
+            })
+        rows.sort(key=lambda r: (r["session_date"], r["session_time"]))
+        return rows
 
 
 def get_all_bookings():
@@ -1275,7 +1571,7 @@ def add_session(session_code: str, title: str, trainer: str, session_date: str, 
 
 def create_backup(trigger_type: str = "MANUAL"):
     """Week 6 Team Security Choice: Physical DB Snapshot Backup."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = _now().strftime("%Y%m%d_%H%M%S")
     now_str = _now_str()
 
     if USE_SQLITE:

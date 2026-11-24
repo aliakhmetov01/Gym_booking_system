@@ -147,10 +147,18 @@ def serve_static(filename):
 def api_get_sessions():
     """FR-01: Show available training sessions with date, time, trainer, capacity, and free places."""
     sessions = database.get_all_sessions()
+    for s in sessions:
+        # Quiet hours: sessions starting 12:00-16:59 give x2 XP
+        s["xp_multiplier"] = database.xp_multiplier(s["session_time"])
     return jsonify({
         "status": "success",
         "count": len(sessions),
         "data": sessions,
+        "quiet_hours": {
+            "start": database.QUIET_HOURS_START,
+            "end": database.QUIET_HOURS_END,
+            "multiplier": database.QUIET_XP_MULTIPLIER,
+        },
     })
 
 
@@ -243,6 +251,7 @@ def api_my_bookings():
         "status": "success",
         "data": bookings,
         "progress": database.compute_progress(bookings, g.user.get("best_streak", 0)),
+        "waitlist": database.get_user_waitlist(g.user["id"]),
         "rules": {
             "active_count": active,
             "max_active_bookings": database.MAX_ACTIVE_BOOKINGS,
@@ -267,6 +276,40 @@ def api_cancel_booking():
         "message": result["message"],
         "progress": database.get_user_progress(g.user["id"]),   # cancelled booking loses its XP
     })
+
+
+def _session_id_from_request():
+    data = request.get_json(silent=True) or {}
+    try:
+        return int(data.get("session_id"))
+    except (TypeError, ValueError):
+        return None
+
+
+@app.route("/api/waitlist/join", methods=["POST"])
+@require_auth
+def api_join_waitlist():
+    """Smart waitlist: queue for a full session; a freed spot is booked automatically."""
+    session_id = _session_id_from_request()
+    if session_id is None:
+        return jsonify({"status": "error", "message": "Invalid session_id."}), 400
+    result = database.join_waitlist(session_id, g.user["id"])
+    if not result["success"]:
+        return jsonify({"status": "error", "message": result["error"]}), 400
+    return jsonify({"status": "success", "message": result["message"],
+                    "data": {"position": result["position"], "queue_size": result["queue_size"]}})
+
+
+@app.route("/api/waitlist/leave", methods=["POST"])
+@require_auth
+def api_leave_waitlist():
+    session_id = _session_id_from_request()
+    if session_id is None:
+        return jsonify({"status": "error", "message": "Invalid session_id."}), 400
+    result = database.leave_waitlist(session_id, g.user["id"])
+    if not result["success"]:
+        return jsonify({"status": "error", "message": result["error"]}), 400
+    return jsonify({"status": "success", "message": result["message"]})
 
 
 @app.route("/api/book", methods=["POST"])
@@ -382,5 +425,6 @@ def api_health():
         "client_ip": request.remote_addr,
         "db_latency_ms": db_latency_ms,
         "uptime_seconds": uptime_sec,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": database._now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timezone": f"UTC{database.APP_UTC_OFFSET_HOURS:+g}",
     })

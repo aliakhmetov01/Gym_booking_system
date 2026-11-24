@@ -60,6 +60,7 @@
 |   - POST /api/book       -> Transactional Booking     |
 |   - GET  /api/my/bookings-> Member profile bookings   |
 |   - POST /api/cancel     -> Cancel own booking (24h)  |
+|   - POST /api/waitlist/join | /api/waitlist/leave     |
 |   - POST /api/checkin    -> Reception Desk Check-in   |
 |   - POST /api/backup     -> Disaster Recovery Engine  |
 |   - GET  /api/health     -> Network Latency & Metrics |
@@ -101,14 +102,30 @@
 * The header shows the current streak; the profile shows the streak, the personal best and the time left to keep it.
 * Why it matters: it rewards regular training, the main reason gym members drop out is irregular attendance.
 
+### ⏳ Smart waitlist (auto-booking)
+* A full session shows **Join waitlist**. Members queue **first come, first served** and see their place (`#2 of 3`).
+* When someone cancels, the freed spot is **automatically booked** for the first eligible member in the same
+  database transaction; the booking is marked *via waitlist* and the member gets a notification on the page.
+* A member who is at the 2-booking limit keeps their place but is skipped, so the spot never stays blocked.
+* Demo session `SES-117 Personal Training 1-on-1` has capacity 1, so the whole flow can be shown in 30 seconds.
+
+### ⚡ Quiet hours: x2 XP
+* Sessions starting **12:00–16:59** (the least busy part of the day) give **double XP** for the booking and for attendance.
+* Marked on the schedule with *⚡ x2 XP · quiet hours*; the ticket shows `+40 XP (⚡ x2 quiet hours)`.
+* Business value: gamification moves members from the overcrowded evening peak into empty afternoon slots.
+
+### 🕔 Time zone
+All times are in gym local time **UTC+5** (Kazakhstan), even though Vercel servers run in UTC.
+Override with the `APP_UTC_OFFSET` environment variable if needed.
+
 ### 🏆 Gamification: levels, XP and badges
 XP and badges are **calculated from the booking history** (`compute_progress()` in `api/_database.py`), so no extra tables
 are needed and the same logic works on SQLite, the serverless store and Supabase. Cancelled bookings give nothing.
 
 | Action | XP |
 | :--- | :--- |
-| Booking (not cancelled) | +20 |
-| Attended (checked in at reception) | +30 |
+| Booking (not cancelled) | +20 (x2 in quiet hours) |
+| Attended (checked in at reception) | +30 (x2 in quiet hours) |
 | Badge unlocked | +50 |
 
 | Level | XP needed |
@@ -185,6 +202,14 @@ Open your browser at: **`http://localhost:5000`**
 3. Open **My Bookings**: the member is now **💪 Regular** (150 XP) with a progress bar towards 🏆 Athlete,
    and the badges show progress: *Early Bird 2/3*, *Explorer 2/5*.
 4. Cancel a booking: its XP is removed (anti-farming).
+
+### Test Case 1d: Smart Waitlist and Quiet Hours
+1. Member **A** books `SES-117 Personal Training 1-on-1` (capacity 1, 14:00). The ticket shows **+90 XP**:
+   20 x2 for quiet hours + 50 for the *First Workout* badge. The session is now full.
+2. Member **B** (another browser / incognito) clicks **Full · Join waitlist** → *On waitlist · #1 of 1*.
+3. Member **A** cancels the booking in **My Bookings**.
+4. **Result:** the spot is booked for **B** automatically (*The spot went to the next member on the waitlist*).
+   B sees *🎉 A spot opened up!*, and the booking is marked *via waitlist*.
 
 ### Test Case 2: Overbooking Prevention (FR-03 & TC-01)
 1. Log in as the **admin**. In the schedule, locate session **`SES-106` (Boxing Sparring & Technique)**, shown as `8/8 booked • Full`.

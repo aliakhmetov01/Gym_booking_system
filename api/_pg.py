@@ -42,7 +42,7 @@ def _to_str(v):
     """Converts Postgres date/time values into the strings the frontend expects."""
     if isinstance(v, datetime):
         if v.tzinfo is not None:
-            v = v.astimezone().replace(tzinfo=None)   # server local time, like datetime.now()
+            v = v.astimezone(H.APP_TZ).replace(tzinfo=None)   # gym local time (UTC+5), like _now()
         return v.strftime(H.TS_FMT)
     if isinstance(v, date):
         return v.isoformat()
@@ -95,6 +95,27 @@ def _migrate(cur):
     for column, ddl in USER_COLUMNS.items():
         if column not in existing:
             cur.execute(f"ALTER TABLE public.users ADD COLUMN {column} {ddl}")
+
+    # Waitlist feature: bookings.source + waitlist table
+    cur.execute(
+        """SELECT column_name FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'bookings'"""
+    )
+    if "source" not in {r["column_name"] for r in cur.fetchall()}:
+        cur.execute("""ALTER TABLE public.bookings ADD COLUMN source text not null default 'DIRECT'
+                       check (source in ('DIRECT', 'WAITLIST'))""")
+    cur.execute("SELECT to_regclass('public.waitlist') AS t")
+    if cur.fetchone()["t"] is None:
+        cur.execute("""
+            CREATE TABLE public.waitlist (
+              id         bigint generated always as identity primary key,
+              session_id bigint not null references public.sessions(id) on delete cascade,
+              user_id    bigint not null references public.users(id) on delete cascade,
+              created_at timestamptz not null default now(),
+              unique (session_id, user_id)
+            )""")
+        cur.execute("CREATE INDEX waitlist_queue_idx ON public.waitlist (session_id, created_at, id)")
+        cur.execute("ALTER TABLE public.waitlist ENABLE ROW LEVEL SECURITY")
 
 
 def _ensure_admin(cur):
@@ -164,6 +185,7 @@ def init_db(force_reseed=False):
             demo_id = _ensure_demo_user(cur)
             _ensure_admin(cur)
             if force_reseed:
+                cur.execute("DELETE FROM waitlist")
                 cur.execute("DELETE FROM bookings")
                 cur.execute("DELETE FROM sessions")
                 _seed_schedule(cur, demo_id)
@@ -234,7 +256,9 @@ def get_user_by_id(user_id):
 
 def get_all_sessions():
     with _connect() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT {SESSION_COLS} FROM sessions ORDER BY session_date, session_time")
+        cur.execute(f"""SELECT {SESSION_COLS},
+                              (SELECT count(*) FROM waitlist w WHERE w.session_id = sessions.id) AS waitlist_count
+                         FROM sessions ORDER BY session_date, session_time""")
         return _rows(cur.fetchall())
 
 
@@ -330,6 +354,7 @@ def create_booking(session_id, user_id):
             streak, best = H._streak_after_booking(_row(cur.fetchone()))
             cur.execute("UPDATE users SET streak = %s, best_streak = %s, last_booking_at = now() WHERE id = %s",
                         (streak, best, user_id))
+            cur.execute("DELETE FROM waitlist WHERE session_id = %s AND user_id = %s", (session_id, user_id))
 
         remaining = session["capacity"] - (session["booked_count"] + 1)
         return H._booking_result(booking_code, session, user, remaining, created_at, streak, best)
@@ -342,7 +367,7 @@ def create_booking(session_id, user_id):
 def get_user_bookings(user_id):
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT b.id, b.booking_code, b.status, b.created_at, b.cancelled_at,
+            """SELECT b.id, b.booking_code, b.status, b.created_at, b.cancelled_at, b.source,
                       s.id AS session_id, s.session_code, s.title AS session_title, s.trainer,
                       s.category, s.session_date, s.session_time
                FROM bookings b JOIN sessions s ON b.session_id = s.id
@@ -383,9 +408,106 @@ def cancel_booking(booking_code, user_id):
                         (user_id,))
             cur.execute("UPDATE users SET streak = %s WHERE id = %s",
                         (H._streak_after_cancel(_row(cur.fetchone())), user_id))
-        return {"success": True, "message": f"Booking {code} for {b['session_code']} ({b['title']}) cancelled. The spot is free again."}
+            # Waitlist: the freed spot goes to the first member in the queue
+            promoted = _promote_from_waitlist(cur, b["session_id"])
+        return {"success": True, "promoted": bool(promoted),
+                "message": H._cancel_message(code, b["session_code"], b["title"], promoted)}
     except psycopg.errors.CheckViolation as e:
         return {"success": False, "error": _db_error_message(e)}
+
+
+# =========================================================================
+# Waitlist (same rules as _database.py: first come, first served,
+# members at the booking limit keep their place but are skipped)
+# =========================================================================
+
+def _promote_from_waitlist(cur, session_id):
+    """Inside the cancel transaction: gives the freed spot to the first eligible member."""
+    cur.execute("SELECT capacity, booked_count FROM sessions WHERE id = %s FOR UPDATE", (session_id,))
+    session = cur.fetchone()
+    if not session or session["booked_count"] >= session["capacity"]:
+        return None
+    cur.execute("SELECT id, user_id FROM waitlist WHERE session_id = %s ORDER BY created_at, id FOR UPDATE",
+                (session_id,))
+    for entry in cur.fetchall():
+        uid = entry["user_id"]
+        cur.execute("SELECT id, full_name, phone, streak, best_streak, last_booking_at FROM users WHERE id = %s FOR UPDATE",
+                    (uid,))
+        user = _row(cur.fetchone())
+        cur.execute("SELECT 1 FROM bookings WHERE session_id = %s AND user_id = %s AND status <> 'CANCELLED'",
+                    (session_id, uid))
+        if not user or cur.fetchone():
+            cur.execute("DELETE FROM waitlist WHERE id = %s", (entry["id"],))
+            continue
+        cur.execute("SELECT COUNT(*) AS cnt FROM bookings WHERE user_id = %s AND status = 'CONFIRMED'", (uid,))
+        if cur.fetchone()["cnt"] >= H.MAX_ACTIVE_BOOKINGS:
+            continue   # at the limit: keeps the place in the queue
+        cur.execute("SELECT booking_code FROM bookings")
+        code = H._new_booking_code({r["booking_code"] for r in cur.fetchall()})
+        cur.execute(
+            """INSERT INTO bookings (booking_code, session_id, user_id, member_name, member_phone, status, source)
+               VALUES (%s, %s, %s, %s, %s, 'CONFIRMED', 'WAITLIST')""",
+            (code, session_id, uid, user["full_name"], user["phone"]),
+        )
+        cur.execute("UPDATE sessions SET booked_count = booked_count + 1 WHERE id = %s", (session_id,))
+        streak, best = H._streak_after_booking(user)
+        cur.execute("UPDATE users SET streak = %s, best_streak = %s, last_booking_at = now() WHERE id = %s",
+                    (streak, best, uid))
+        cur.execute("DELETE FROM waitlist WHERE id = %s", (entry["id"],))
+        return {"booking_code": code, "user_id": uid}
+    return None
+
+
+def join_waitlist(session_id, user_id):
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT id, session_code, title, capacity, booked_count FROM sessions WHERE id = %s FOR UPDATE",
+                        (session_id,))
+            session = cur.fetchone()
+            cur.execute("SELECT 1 FROM bookings WHERE session_id = %s AND user_id = %s AND status <> 'CANCELLED'",
+                        (session_id, user_id))
+            booked = cur.fetchone() is not None
+            cur.execute("SELECT user_id FROM waitlist WHERE session_id = %s ORDER BY created_at, id", (session_id,))
+            queue = [r["user_id"] for r in cur.fetchall()]
+            mine = queue.index(user_id) + 1 if user_id in queue else 0
+            err = H._waitlist_join_checks(session, booked, mine)
+            if err:
+                return {"success": False, "error": err}
+            cur.execute("INSERT INTO waitlist (session_id, user_id) VALUES (%s, %s)", (session_id, user_id))
+            cur.execute("SELECT COUNT(*) AS cnt FROM bookings WHERE user_id = %s AND status = 'CONFIRMED'", (user_id,))
+            active = cur.fetchone()["cnt"]
+        return H._waitlist_join_result(session, len(queue) + 1, len(queue) + 1, active)
+    except psycopg.errors.UniqueViolation:
+        return {"success": False, "error": "You are already on the waitlist for this session."}
+
+
+def leave_waitlist(session_id, user_id):
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM waitlist WHERE session_id = %s AND user_id = %s", (session_id, user_id))
+        removed = cur.rowcount
+    if not removed:
+        return {"success": False, "error": "You are not on the waitlist for this session."}
+    return {"success": True, "message": "You left the waitlist."}
+
+
+def get_user_waitlist(user_id):
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT q.session_id, q.joined_at, q.position, q.queue_size,
+                      s.session_code, s.title AS session_title, s.trainer, s.category,
+                      s.session_date, s.session_time
+               FROM (
+                   SELECT w.session_id, w.user_id, w.created_at AS joined_at,
+                          row_number() OVER (PARTITION BY w.session_id ORDER BY w.created_at, w.id) AS position,
+                          count(*)     OVER (PARTITION BY w.session_id) AS queue_size
+                   FROM waitlist w
+               ) q
+               JOIN sessions s ON s.id = q.session_id
+               WHERE q.user_id = %s
+               ORDER BY s.session_date, s.session_time""",
+            (user_id,),
+        )
+        return _rows(cur.fetchall())
 
 
 def get_all_bookings():
@@ -429,7 +551,7 @@ def checkin_booking(code):
 # =========================================================================
 
 def create_backup(trigger_type="MANUAL"):
-    now = datetime.now()
+    now = H._now()
     filename = f"gym_backup_{now.strftime('%Y%m%d_%H%M%S')}.json"
     dest = os.path.join(H.BACKUP_DIR, filename)
     try:
@@ -484,6 +606,7 @@ PUBLIC_FUNCTIONS = (
     "create_booking", "get_user_bookings", "cancel_booking",
     "get_all_bookings", "checkin_booking",
     "create_backup", "get_backups",
+    "join_waitlist", "leave_waitlist", "get_user_waitlist",
 )
 
 

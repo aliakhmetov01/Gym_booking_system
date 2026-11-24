@@ -140,7 +140,7 @@
           <select id="filter-time" onchange="renderSessions()" class="text-sm border border-zinc-300 rounded-md px-2.5 py-1.5 bg-white text-zinc-800 focus:outline-none focus:border-zinc-500">
             <option value="ALL">All day</option>
             <option value="MORNING">Morning (08:00 - 12:00)</option>
-            <option value="AFTERNOON">Afternoon (12:00 - 17:00)</option>
+            <option value="AFTERNOON">Afternoon (12:00 - 17:00) · ⚡ x2 XP</option>
             <option value="EVENING">Evening (17:00 - 21:00)</option>
           </select>
         </div>
@@ -469,6 +469,15 @@
         </div>
       </div>
 
+      <!-- Smart waitlist: queues for full sessions (hidden when empty) -->
+      <div id="my-waitlist-section" class="hidden bg-white rounded-lg border border-amber-200 p-5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-zinc-900">My waitlist</h3>
+          <span class="text-[11px] text-zinc-500">When someone cancels, the spot is booked for you automatically.</span>
+        </div>
+        <div id="my-waitlist-list" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3"></div>
+      </div>
+
       <!-- Gamification: level, XP and badges -->
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <!-- Level card -->
@@ -495,6 +504,7 @@
             <div>+<span id="xp-rule-booking">20</span> XP for every booking</div>
             <div>+<span id="xp-rule-attendance">30</span> XP when you attend (check-in at reception)</div>
             <div>+<span id="xp-rule-badge">50</span> XP for every badge</div>
+            <div class="text-emerald-700 font-medium">⚡ x2 XP for sessions starting 12:00–17:00 (quiet hours)</div>
             <div class="text-zinc-400">Cancelled bookings give no XP.</div>
           </div>
         </div>
@@ -560,6 +570,9 @@
           <div class="font-medium text-zinc-900" id="modal-member-line">--</div>
         </div>
 
+        <p id="modal-quiet-note" class="hidden text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1.5">
+          ⚡ Quiet hours: this session gives <strong>x2 XP</strong> (booking and attendance).
+        </p>
         <p id="modal-limit-note" class="text-[11px] text-zinc-500">--</p>
 
         <div class="flex gap-2 pt-2">
@@ -808,6 +821,8 @@
       setToken(null);
       currentUser = null;
       myBookings = [];
+      myWaitlist = [];
+      waitlistLoaded = false;
       myProgress = null;
       renderProgress();
       document.getElementById('auth-guest').classList.remove('hidden');
@@ -969,7 +984,8 @@
       }
       const rows = [];
       if (gains.xpGained > 0) {
-        rows.push(`<div class="font-semibold text-emerald-700">+${gains.xpGained} XP</div>`);
+        const quietText = gains.multiplier > 1 ? ` <span class="font-medium">(⚡ x${gains.multiplier} quiet hours)</span>` : '';
+        rows.push(`<div class="font-semibold text-emerald-700">+${gains.xpGained} XP${quietText}</div>`);
       }
       if (gains.levelUp) {
         rows.push(`<div class="mx-auto w-fit px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-semibold">
@@ -1071,15 +1087,101 @@
         const res = await apiRequest('/my/bookings');
         if (!res.ok) return;
         const json = await res.json();
+        const prevQueued = waitlistLoaded ? new Set(myWaitlist.map(w => w.session_id)) : new Set();
         myBookings = json.data;
         bookingRules = json.rules;
+        myWaitlist = json.waitlist || [];
         setProgress(json.progress);
         renderSessions();
         renderProfile();
+        renderMyWaitlist();
+
+        // Someone cancelled and the waitlist gave us their spot
+        const stillQueued = new Set(myWaitlist.map(w => w.session_id));
+        const promoted = myBookings.filter(b => prevQueued.has(b.session_id) && !stillQueued.has(b.session_id)
+                                               && b.source === 'WAITLIST' && b.status !== 'CANCELLED');
+        if (promoted.length) {
+          const b = promoted[0];
+          showToast(`🎉 A spot opened up! You are now booked for ${b.session_code} (${b.booking_code}).`);
+          refreshMe();       // streak +1
+          fetchSessions();
+        }
+        waitlistLoaded = true;
       } catch (err) {
         console.error(err);
       }
     }
+
+    // ---------------- WAITLIST ----------------
+    let myWaitlist = [];
+    let waitlistLoaded = false;
+
+    function myWaitlistFor(sessionId) {
+      return myWaitlist.find(w => w.session_id === sessionId);
+    }
+
+    async function joinWaitlist(sessionId) {
+      if (!currentUser) {
+        showToast('Please log in or sign up to join the waitlist.');
+        openAuthModal('login');
+        return;
+      }
+      try {
+        const res = await apiRequest('/waitlist/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await res.json();
+        showToast(data.message, !res.ok);
+        await fetchMyBookings();
+        fetchSessions();
+      } catch (err) {
+        showToast('Could not join the waitlist', true);
+      }
+    }
+
+    async function leaveWaitlist(sessionId) {
+      const w = myWaitlistFor(sessionId);
+      if (w && !confirm(`Leave the waitlist for ${w.session_code}? You will lose your place #${w.position}.`)) return;
+      try {
+        const res = await apiRequest('/waitlist/leave', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+        const data = await res.json();
+        showToast(data.message, !res.ok);
+        await fetchMyBookings();
+        fetchSessions();
+      } catch (err) {
+        showToast('Could not leave the waitlist', true);
+      }
+    }
+
+    function renderMyWaitlist() {
+      const section = document.getElementById('my-waitlist-section');
+      if (!section) return;
+      section.classList.toggle('hidden', myWaitlist.length === 0);
+      document.getElementById('my-waitlist-list').innerHTML = myWaitlist.map(w => `
+        <div class="flex items-center justify-between gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs">
+          <div class="min-w-0">
+            <div class="font-semibold text-zinc-900 truncate">${esc(w.session_code)} &middot; ${esc(w.session_title)}</div>
+            <div class="text-zinc-600">${esc(w.session_date)} ${esc(w.session_time)} &middot; ${esc(w.trainer)}</div>
+          </div>
+          <div class="text-right shrink-0">
+            <div class="text-base font-bold text-amber-800">#${w.position}<span class="text-[11px] font-medium text-amber-700"> of ${w.queue_size}</span></div>
+            <button onclick="leaveWaitlist(${w.session_id})" class="text-[11px] font-medium text-zinc-500 hover:text-red-600 underline">Leave</button>
+          </div>
+        </div>`).join('');
+    }
+
+    // Keep the schedule, queue places and promotions fresh while the page is open
+    setInterval(() => {
+      if (document.hidden) return;
+      fetchSessions();
+      if (currentUser) fetchMyBookings();
+    }, 30000);
 
     function renderProfile() {
       if (!currentUser) return;
@@ -1133,7 +1235,8 @@
         }
         return `
           <tr class="hover:bg-zinc-50 ${b.status === 'CANCELLED' ? 'opacity-60' : ''}">
-            <td class="py-2.5 px-4 font-mono font-medium text-zinc-900 whitespace-nowrap">${esc(b.booking_code)}</td>
+            <td class="py-2.5 px-4 font-mono font-medium text-zinc-900 whitespace-nowrap">${esc(b.booking_code)}
+              ${b.source === 'WAITLIST' ? '<div class="font-sans text-[10px] font-semibold text-amber-700">via waitlist</div>' : ''}</td>
             <td class="py-2.5 px-4 text-xs text-zinc-700">${esc(b.session_code)} &middot; ${esc(b.session_title)}<div class="text-[11px] text-zinc-400">${esc(b.trainer)}</div></td>
             <td class="py-2.5 px-4 text-xs text-zinc-600">${esc(b.session_date)} ${esc(b.session_time)}</td>
             <td class="py-2.5 px-4 text-xs text-zinc-500">${esc(b.created_at)}</td>
@@ -1240,6 +1343,9 @@
         const isFull = s.free_places <= 0;
         const percent = Math.min(100, Math.round((s.booked_count / s.capacity) * 100));
         const mine = currentUser ? activeBookingFor(s.id) : null;
+        const queued = currentUser ? myWaitlistFor(s.id) : null;
+        const quiet = (s.xp_multiplier || 1) > 1;
+        const waiting = s.waitlist_count || 0;
 
         let actionHtml;
         if (mine) {
@@ -1253,10 +1359,15 @@
             <button onclick="tryBookFullSession('${esc(s.session_code)}')" class="w-full py-2 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition">
               Full (Test Overbooking)
             </button>`;
+        } else if (isFull && queued) {
+          actionHtml = `
+            <button onclick="leaveWaitlist(${s.id})" class="w-full py-2 text-xs font-medium rounded-md bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition" title="Click to leave the waitlist">
+              On waitlist &middot; #${queued.position} of ${queued.queue_size} &middot; Leave
+            </button>`;
         } else if (isFull) {
           actionHtml = `
-            <button disabled class="w-full py-2 text-xs font-medium rounded-md bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed">
-              Fully booked
+            <button onclick="joinWaitlist(${s.id})" class="w-full py-2 text-xs font-medium rounded-md bg-amber-500 hover:bg-amber-600 text-white transition">
+              Full &middot; Join waitlist${waiting ? ` (${waiting} waiting)` : ''}
             </button>`;
         } else {
           actionHtml = `
@@ -1275,10 +1386,12 @@
 
               <h3 class="text-base font-semibold text-zinc-900">${esc(s.title)}</h3>
               <p class="text-xs text-zinc-500 mt-1">Trainer: ${esc(s.trainer)}</p>
+              ${quiet ? `<span class="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              title="Quiet hours: fewer people, double XP">⚡ x${s.xp_multiplier} XP &middot; quiet hours</span>` : ''}
 
               <div class="mt-4">
                 <div class="flex justify-between text-xs mb-1">
-                  <span class="text-zinc-500">${s.booked_count}/${s.capacity} booked</span>
+                  <span class="text-zinc-500">${s.booked_count}/${s.capacity} booked${waiting ? ` &middot; <span class="text-amber-700 font-medium">${waiting} waiting</span>` : ''}</span>
                   <span class="font-medium ${isFull ? 'text-red-600' : 'text-zinc-800'}">
                     ${isFull ? 'Full' : `${s.free_places} spots left`}
                   </span>
@@ -1316,6 +1429,7 @@
         note.innerText = `Active bookings: ${active_count}/${max_active_bookings}. Free cancellation within ${bookingRules.cancel_window_hours} hours after booking.`;
         note.className = 'text-[11px] text-zinc-500';
       }
+      document.getElementById('modal-quiet-note').classList.toggle('hidden', !((s.xp_multiplier || 1) > 1));
       document.getElementById('modal-session-id').value = s.id;
       document.getElementById('modal-session-code').innerText = s.session_code;
       document.getElementById('modal-session-title').innerText = s.title;
@@ -1345,6 +1459,8 @@
           closeBookingModal();
           setStreak(data.data);
           const gains = setProgress(data.data.progress);
+          const booked = currentSessions.find(x => String(x.id) === String(sessionId));
+          if (gains) gains.multiplier = booked ? (booked.xp_multiplier || 1) : 1;
           const xpText = gains && gains.xpGained > 0 ? ` · +${gains.xpGained} XP` : '';
           showToast(`Booked: ${data.data.booking_code} · 🔥 streak ${data.data.streak}${xpText}`);
           fetchSessions();
