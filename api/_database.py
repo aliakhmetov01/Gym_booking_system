@@ -17,6 +17,7 @@ import json
 import random
 import tempfile
 import threading
+from contextlib import closing
 from datetime import datetime, timedelta
 
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -29,6 +30,8 @@ except ImportError:
     HAS_SQLITE = False
 
 _STORE_LOCK = threading.Lock()
+_SQLITE_INIT_LOCK = threading.Lock()
+_sqlite_initialized_path = None
 
 
 def _load_dotenv():
@@ -505,6 +508,14 @@ def _sqlite_init_schema(conn, force_reseed=False):
     );
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS booking_rate_limits (
+        user_id INTEGER PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+        window_start INTEGER NOT NULL,
+        attempts INTEGER NOT NULL CHECK (attempts > 0)
+    );
+    """)
+
     # Migration for databases created before accounts existed
     cols = {r["name"] for r in cursor.execute("PRAGMA table_info(bookings)").fetchall()}
     if "user_id" not in cols:
@@ -721,12 +732,16 @@ def _json_save_store(store):
 # =========================================================================
 
 def init_db(force_reseed=False):
+    global _sqlite_initialized_path
     if USE_SQLITE:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON;")
-        _sqlite_init_schema(conn, force_reseed=force_reseed)
-        conn.close()
+        with _SQLITE_INIT_LOCK:
+            if not force_reseed and _sqlite_initialized_path == DB_PATH and os.path.isfile(DB_PATH):
+                return
+            with closing(sqlite3.connect(DB_PATH)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                _sqlite_init_schema(conn, force_reseed=force_reseed)
+            _sqlite_initialized_path = DB_PATH
     else:
         with _STORE_LOCK:
             if force_reseed:
@@ -814,6 +829,40 @@ def authenticate_user(email: str, password: str):
 
 def get_user_by_id(user_id: int):
     return _public_user(_find_user("id", user_id))
+
+
+# Both SQL engines use the same atomic update. The guard also prevents an older
+# in-flight request from replacing a newer window.
+BOOKING_ATTEMPT_UPSERT = """
+    INSERT INTO {table} (user_id, window_start, attempts)
+    VALUES ({param}, {param}, 1)
+    ON CONFLICT (user_id) DO UPDATE SET
+        window_start = excluded.window_start,
+        attempts = CASE WHEN excluded.window_start > booking_rate_limits.window_start
+                        THEN 1 ELSE booking_rate_limits.attempts + 1 END
+    WHERE excluded.window_start > booking_rate_limits.window_start
+       OR (excluded.window_start = booking_rate_limits.window_start
+           AND booking_rate_limits.attempts < {param})
+    RETURNING attempts
+"""
+
+
+def consume_booking_attempt(user_id, window_start, limit):
+    """Returns whether the attempt was counted, or raises if no shared store exists."""
+    if not USE_SQLITE:
+        raise RuntimeError("Booking rate limiting requires SQLite or PostgreSQL.")
+    sql = BOOKING_ATTEMPT_UPSERT.format(table="booking_rate_limits", param="?")
+    with closing(_sqlite_get_conn()) as conn, conn:
+        return conn.execute(sql, (user_id, window_start, limit)).fetchone() is not None
+
+
+def probe_storage():
+    if USE_SQLITE:
+        with closing(_sqlite_get_conn()) as conn:
+            conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone()
+    else:
+        with _STORE_LOCK:
+            _json_load_store()["sessions"]
 
 
 # ---------------------------- Sessions ----------------------------------

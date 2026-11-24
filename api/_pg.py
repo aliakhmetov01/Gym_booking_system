@@ -97,6 +97,24 @@ def _migrate(cur):
             cur.execute(f"ALTER TABLE public.users ADD COLUMN {column} {ddl}")
 
 
+def _migrate_booking_rate_limits(cur):
+    cur.execute("""
+        SELECT relrowsecurity FROM pg_catalog.pg_class
+        WHERE oid = to_regclass('public.booking_rate_limits')
+    """)
+    table = cur.fetchone()
+    if table and table["relrowsecurity"]:
+        return
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS public.booking_rate_limits (
+            user_id bigint PRIMARY KEY REFERENCES public.users (id) ON DELETE CASCADE,
+            window_start bigint NOT NULL,
+            attempts integer NOT NULL CHECK (attempts > 0)
+        )
+    """)
+    cur.execute("ALTER TABLE public.booking_rate_limits ENABLE ROW LEVEL SECURITY")
+
+
 def _ensure_admin(cur):
     """Creates the admin account or syncs its role/password with ADMIN_PASSWORD."""
     pw = H._admin_password()
@@ -159,8 +177,14 @@ def init_db(force_reseed=False):
     if _initialized and not force_reseed:
         return
     with _init_lock:
+        if _initialized and not force_reseed:
+            return
         with _connect() as conn, conn.cursor() as cur:
+            # Serialize first-request migrations across separate Vercel workers.
+            cur.execute("SELECT pg_advisory_xact_lock(122987008, 1)")
             _migrate(cur)
+            if not _initialized:
+                _migrate_booking_rate_limits(cur)
             demo_id = _ensure_demo_user(cur)
             _ensure_admin(cur)
             if force_reseed:
@@ -172,6 +196,19 @@ def init_db(force_reseed=False):
                 if cur.fetchone()["cnt"] == 0:
                     _seed_schedule(cur, demo_id)
         _initialized = True
+
+
+def consume_booking_attempt(user_id, window_start, limit):
+    sql = H.BOOKING_ATTEMPT_UPSERT.format(table="public.booking_rate_limits", param="%s")
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(sql, (user_id, window_start, limit))
+        return cur.fetchone() is not None
+
+
+def probe_storage():
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM public.sessions LIMIT 1")
+        cur.fetchone()
 
 
 def get_storage_engine_name():
@@ -478,7 +515,7 @@ def get_backups():
 # =========================================================================
 
 PUBLIC_FUNCTIONS = (
-    "init_db", "get_storage_engine_name",
+    "init_db", "get_storage_engine_name", "consume_booking_attempt", "probe_storage",
     "register_user", "authenticate_user", "get_user_by_id",
     "get_all_sessions", "get_session_by_id", "add_session",
     "create_booking", "get_user_bookings", "cancel_booking",

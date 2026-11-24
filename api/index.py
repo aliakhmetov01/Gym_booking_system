@@ -3,6 +3,7 @@ Flask application for Gym Booking System (Vercel Serverless & Local WSGI).
 Acts as the central server in 3-Tier Client-Server architecture (Week 10).
 """
 
+import math
 import os
 import sys
 import time
@@ -25,7 +26,9 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 
 app = Flask(__name__, static_folder=PUBLIC_DIR)
 app.url_map.strict_slashes = False
-START_TIME = time.time()
+START_TIME = time.monotonic()
+BOOKING_REQUEST_LIMIT = 5
+BOOKING_WINDOW_SECONDS = 60
 
 # Signed, stateless auth tokens (work on serverless without a session store).
 # Set SECRET_KEY in the environment (Vercel -> Settings -> Environment Variables) for production.
@@ -108,7 +111,8 @@ app.wsgi_app = VercelPathFixMiddleware(app.wsgi_app)
 @app.before_request
 def ensure_db():
     """Ensures database schema and seed data exist before any request."""
-    database.init_db()
+    if request.endpoint != "api_health":
+        database.init_db()
 
 
 @app.after_request
@@ -117,6 +121,7 @@ def add_cors(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+    response.headers["Access-Control-Expose-Headers"] = "Retry-After"
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
@@ -273,9 +278,28 @@ def api_cancel_booking():
 @require_auth
 def api_book_session():
     """FR-02, FR-03 & BR-04: logged-in member books a session (max 2 active bookings)."""
-    data = request.get_json(silent=True) or {}
+    window_start = int(time.time()) // BOOKING_WINDOW_SECONDS * BOOKING_WINDOW_SECONDS
     try:
-        session_id = int(data.get("session_id"))
+        allowed = database.consume_booking_attempt(g.user["id"], window_start, BOOKING_REQUEST_LIMIT)
+    except Exception:
+        app.logger.exception("Booking rate limiter unavailable")
+        return jsonify({
+            "status": "error",
+            "message": "Booking is temporarily unavailable. Please try again later.",
+        }), 503
+
+    if not allowed:
+        retry_after = max(1, math.ceil(window_start + BOOKING_WINDOW_SECONDS - time.time()))
+        return jsonify({
+            "status": "error",
+            "code": "BOOKING_RATE_LIMITED",
+            "message": "Too many booking attempts. Please try again later.",
+            "retry_after": retry_after,
+        }), 429, {"Retry-After": str(retry_after)}
+
+    data = request.get_json(silent=True)
+    try:
+        session_id = int(data.get("session_id") if isinstance(data, dict) else None)
     except (TypeError, ValueError):
         return jsonify({"status": "error", "message": "Invalid session_id."}), 400
 
@@ -368,10 +392,16 @@ def api_reset_db():
 @app.route("/api/health", methods=["GET"])
 def api_health():
     """Week 10 Telecommunications & Networks diagnostic endpoint."""
-    t0 = time.time()
-    _ = database.get_all_sessions()
-    db_latency_ms = round((time.time() - t0) * 1000, 2)
-    uptime_sec = round(time.time() - START_TIME, 1)
+    try:
+        database.init_db()
+        t0 = time.perf_counter()
+        database.probe_storage()
+    except Exception:
+        app.logger.exception("Health check could not reach storage")
+        return jsonify({"status": "OFFLINE", "message": "Storage unavailable."}), 503
+
+    db_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+    uptime_sec = round(time.monotonic() - START_TIME, 1)
 
     return jsonify({
         "status": "ONLINE",

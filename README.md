@@ -80,6 +80,28 @@
 
 ---
 
+## Booking rate limit and network monitoring
+
+* `POST /api/book` allows five attempts per signed-in account in each fixed 60-second window.
+  Validation failures count toward the limit. Further attempts receive HTTP `429` and
+  `Retry-After` in seconds, which the booking modal displays. The separate two-active-bookings
+  rule still applies.
+* The quota is stored in one database row per account and updated atomically. SQLite creates
+  the table when opening an existing local database. On Vercel, configure the existing
+  `DATABASE_URL` to Supabase. The server creates the quota table with row-level security at
+  startup. The temporary JSON store has no shared quota, so authenticated booking attempts
+  return HTTP `503` when that store is active.
+* The admin **System** tab shows **Network Performance**. The browser checks `/api/health`
+  every five seconds, plots HTTP request/response time and the timed database probe, and
+  records failed checks and recoveries. The last 12 checks and totals are kept for the current
+  page session. **Server Uptime** is for the Flask worker that answered the latest check.
+
+Run the local regression tests against a temporary copy of SQLite:
+
+```sh
+env DATABASE_URL= python -m unittest discover -s tests -v
+```
+
 ## 👤 Member Accounts & Booking Rules
 
 * **Sign up / Log in** from the header. Passwords are stored only as salted hashes (`werkzeug.security`); the API issues a signed token (`itsdangerous`, valid 7 days) sent as `Authorization: Bearer <token>`.
