@@ -101,6 +101,32 @@
 * The header shows the current streak; the profile shows the streak, the personal best and the time left to keep it.
 * Why it matters: it rewards regular training, the main reason gym members drop out is irregular attendance.
 
+### 🏆 Gamification: levels, XP and badges
+XP and badges are **calculated from the booking history** (`compute_progress()` in `api/_database.py`), so no extra tables
+are needed and the same logic works on SQLite, the serverless store and Supabase. Cancelled bookings give nothing.
+
+| Action | XP |
+| :--- | :--- |
+| Booking (not cancelled) | +20 |
+| Attended (checked in at reception) | +30 |
+| Badge unlocked | +50 |
+
+| Level | XP needed |
+| :--- | :--- |
+| 🌱 Rookie | 0 |
+| 💪 Regular | 100 |
+| 🏆 Athlete | 300 |
+
+| Badge | How to unlock |
+| :--- | :--- |
+| 🎯 First Workout | Book your first session |
+| 🔥 On Fire | Reach a streak of 5 bookings in a row |
+| 🧭 Explorer | Try all 5 workout types (CrossFit, Boxing, Strength, Pilates, HIIT Cardio) |
+| 🌅 Early Bird | Book 3 morning sessions (before 12:00) |
+
+The header shows the member's level; **My Bookings** shows the XP progress bar to the next level, the level path and
+every badge with its progress (e.g. `2/3`). The booking ticket shows the reward: `+70 XP`, *New badge*, *Level up!*.
+
 ### 👮 Roles
 | Role | Sees | Account |
 | :--- | :--- | :--- |
@@ -151,6 +177,14 @@ Open your browser at: **`http://localhost:5000`**
 1. After Test Case 1 the header shows **🔥 1** and the ticket says *+1 flame*.
 2. Book a second session: the streak becomes **🔥 2** (*personal best*).
 3. Open **My Bookings**: the streak card shows the time left to keep the streak (24 hours from the last booking).
+
+### Test Case 1c: Levels, XP and Badges (Gamification)
+1. A new member books the morning session `SES-101`: the ticket shows **+70 XP** (20 for the booking + 50 for the
+   **🎯 First Workout** badge) and the header shows **🌱 Rookie**.
+2. Book `SES-102`, then as admin check in both bookings at **Reception** (+30 XP each).
+3. Open **My Bookings**: the member is now **💪 Regular** (150 XP) with a progress bar towards 🏆 Athlete,
+   and the badges show progress: *Early Bird 2/3*, *Explorer 2/5*.
+4. Cancel a booking: its XP is removed (anti-farming).
 
 ### Test Case 2: Overbooking Prevention (FR-03 & TC-01)
 1. Log in as the **admin**. In the schedule, locate session **`SES-106` (Boxing Sparring & Technique)**, shown as `8/8 booked • Full`.

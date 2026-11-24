@@ -86,6 +86,7 @@
             <button onclick="switchTab('profile')" class="flex items-center gap-2 pl-1 pr-3 py-1 rounded-full border border-zinc-200 hover:bg-zinc-50 transition" title="Open my profile">
               <span id="user-initials" class="w-6 h-6 rounded-full bg-zinc-900 text-white text-[11px] font-semibold flex items-center justify-center">--</span>
               <span id="user-first-name" class="text-sm font-medium text-zinc-800">--</span>
+              <span id="user-level" class="hidden text-[11px] font-medium text-zinc-500 whitespace-nowrap" title="Your level">--</span>
               <span id="user-admin-badge" class="hidden text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Admin</span>
             </button>
             <button onclick="logout()" class="text-xs font-medium text-zinc-500 hover:text-zinc-900 px-2 py-1.5 rounded-md transition">
@@ -468,6 +469,48 @@
         </div>
       </div>
 
+      <!-- Gamification: level, XP and badges -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Level card -->
+        <div class="bg-white rounded-lg border border-zinc-200 p-5 text-xs">
+          <div class="flex items-center justify-between">
+            <span class="text-zinc-500">Level</span>
+            <span id="profile-xp" class="font-mono font-semibold text-zinc-700">0 XP</span>
+          </div>
+          <div class="flex items-center gap-2 mt-1">
+            <span id="profile-level-icon" class="text-2xl leading-none" aria-hidden="true">🌱</span>
+            <span id="profile-level-name" class="text-2xl font-bold text-zinc-900">Rookie</span>
+            <span id="profile-level-number" class="text-[11px] text-zinc-400 mt-1">Level 1</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-zinc-100 overflow-hidden mt-3">
+            <div id="profile-level-bar" class="h-full rounded-full bg-emerald-500 transition-all duration-700" style="width: 0%"></div>
+          </div>
+          <p id="profile-level-next" class="text-[11px] text-zinc-500 mt-1.5">--</p>
+
+          <!-- Level path: Rookie -> Regular -> Athlete -->
+          <div id="level-path" class="flex items-center gap-1 mt-3 text-[11px]"></div>
+
+          <div class="mt-3 pt-3 border-t border-zinc-100 text-[11px] text-zinc-500 space-y-0.5">
+            <div class="font-medium text-zinc-700">How to earn XP</div>
+            <div>+<span id="xp-rule-booking">20</span> XP for every booking</div>
+            <div>+<span id="xp-rule-attendance">30</span> XP when you attend (check-in at reception)</div>
+            <div>+<span id="xp-rule-badge">50</span> XP for every badge</div>
+            <div class="text-zinc-400">Cancelled bookings give no XP.</div>
+          </div>
+        </div>
+
+        <!-- Badges -->
+        <div class="lg:col-span-2 bg-white rounded-lg border border-zinc-200 p-5">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-zinc-900">Badges</h3>
+            <span id="profile-badges-count" class="text-xs font-medium text-zinc-500">0 / 4 unlocked</span>
+          </div>
+          <div id="badges-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+            <div class="text-xs text-zinc-400">Loading...</div>
+          </div>
+        </div>
+      </div>
+
       <div class="bg-white rounded-lg border border-zinc-200 overflow-hidden">
         <div class="overflow-x-auto">
           <table class="w-full text-left border-collapse text-sm">
@@ -596,6 +639,8 @@
       <div id="ticket-streak" class="no-print hidden mt-3 w-fit mx-auto items-center gap-1.5 px-3 py-1 rounded-full bg-orange-50 border border-orange-200 text-orange-700 text-xs font-semibold">
         <span aria-hidden="true">🔥</span><span id="ticket-streak-text">+1 flame</span>
       </div>
+      <!-- XP / level-up / new badges earned by this booking -->
+      <div id="ticket-rewards" class="no-print hidden mt-2 space-y-1.5 text-xs"></div>
 
       <div class="my-4 p-3 bg-white border border-zinc-200 rounded-md inline-block">
         <div id="qrcode-canvas" class="flex justify-center"></div>
@@ -734,6 +779,7 @@
         if (!res.ok) return;
         const json = await res.json();
         applyLoggedIn(json.data);
+        setProgress(json.progress);
       } catch (e) {
         console.error(e);
       }
@@ -762,6 +808,8 @@
       setToken(null);
       currentUser = null;
       myBookings = [];
+      myProgress = null;
+      renderProgress();
       document.getElementById('auth-guest').classList.remove('hidden');
       const box = document.getElementById('auth-user');
       box.classList.add('hidden');
@@ -834,11 +882,105 @@
     async function refreshMe() {
       try {
         const res = await apiRequest('/auth/me');
-        if (res.ok) setStreak((await res.json()).data);
+        if (!res.ok) return;
+        const json = await res.json();
+        setStreak(json.data);
+        if (json.progress) setProgress(json.progress);
       } catch (e) { console.error(e); }
     }
 
     setInterval(renderStreak, 60000);   // keep the countdown fresh
+
+    // ---------------- LEVELS, XP & BADGES (gamification) ----------------
+    let myProgress = null;
+
+    // Stores new progress and returns what changed since the previous state
+    function setProgress(p) {
+      if (!p) return null;
+      const prev = myProgress;
+      myProgress = p;
+      renderProgress();
+      if (!prev) return null;
+      const before = new Set(prev.badges.filter(b => b.unlocked).map(b => b.id));
+      return {
+        xpGained: p.xp - prev.xp,
+        levelUp: p.level.number > prev.level.number ? p.level : null,
+        newBadges: p.badges.filter(b => b.unlocked && !before.has(b.id)),
+      };
+    }
+
+    function renderProgress() {
+      const p = myProgress;
+      const chipLevel = document.getElementById('user-level');
+      if (!p || !currentUser) { chipLevel.classList.add('hidden'); return; }
+      chipLevel.innerText = `${p.level.icon} ${p.level.name}`;
+      chipLevel.classList.remove('hidden');
+
+      if (!document.getElementById('profile-level-name')) return;
+      document.getElementById('profile-xp').innerText = `${p.xp} XP`;
+      document.getElementById('profile-level-icon').innerText = p.level.icon;
+      document.getElementById('profile-level-name').innerText = p.level.name;
+      document.getElementById('profile-level-number').innerText = `Level ${p.level.number}`;
+      document.getElementById('profile-level-bar').style.width = `${p.level_percent}%`;
+      document.getElementById('profile-level-next').innerText = p.next_level
+        ? `${p.xp_to_next} XP to ${p.next_level.name} ${p.next_level.icon}  (${p.xp - p.level.min_xp} / ${p.next_level.min_xp - p.level.min_xp})`
+        : 'Max level reached. You are a true athlete!';
+      document.getElementById('xp-rule-booking').innerText = p.rules.xp_per_booking;
+      document.getElementById('xp-rule-attendance').innerText = p.rules.xp_per_attendance;
+      document.getElementById('xp-rule-badge').innerText = p.rules.xp_per_badge;
+
+      document.getElementById('level-path').innerHTML = p.levels.map((lvl, i) => {
+        const reached = p.xp >= lvl.min_xp;
+        const current = lvl.key === p.level.key;
+        return `${i ? '<span class="text-zinc-300">&rarr;</span>' : ''}
+          <span class="px-1.5 py-0.5 rounded ${current ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold'
+              : reached ? 'text-zinc-700' : 'text-zinc-400'}" title="${lvl.min_xp} XP">${lvl.icon} ${esc(lvl.name)}</span>`;
+      }).join('');
+
+      document.getElementById('profile-badges-count').innerText = `${p.badges_unlocked} / ${p.badges.length} unlocked`;
+      document.getElementById('badges-grid').innerHTML = p.badges.map(b => {
+        const pct = Math.round(b.progress / b.target * 100);
+        return `
+          <div class="flex items-start gap-3 p-3 rounded-lg border ${b.unlocked ? 'bg-amber-50 border-amber-200' : 'bg-zinc-50 border-zinc-200'}">
+            <div class="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-xl ${b.unlocked ? 'bg-white shadow-sm' : 'bg-zinc-100'}"
+                 style="${b.unlocked ? '' : 'filter: grayscale(1); opacity: .45'}" aria-hidden="true">${b.icon}</div>
+            <div class="min-w-0 flex-1 text-xs">
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-semibold ${b.unlocked ? 'text-amber-900' : 'text-zinc-700'}">${esc(b.name)}</span>
+                <span class="text-[11px] ${b.unlocked ? 'text-amber-700 font-semibold' : 'text-zinc-400'}">${b.unlocked ? 'Unlocked' : `${b.progress}/${b.target}`}</span>
+              </div>
+              <p class="text-[11px] ${b.unlocked ? 'text-amber-800' : 'text-zinc-500'} mt-0.5">${esc(b.description)}</p>
+              ${b.unlocked ? '' : `
+                <div class="w-full h-1 rounded-full bg-zinc-200 overflow-hidden mt-2">
+                  <div class="h-full bg-zinc-500" style="width: ${pct}%"></div>
+                </div>`}
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    // Rewards block on the booking ticket
+    function renderTicketRewards(gains) {
+      const box = document.getElementById('ticket-rewards');
+      if (!gains || (!gains.xpGained && !gains.levelUp && !gains.newBadges.length)) {
+        box.classList.add('hidden');
+        box.innerHTML = '';
+        return;
+      }
+      const rows = [];
+      if (gains.xpGained > 0) {
+        rows.push(`<div class="font-semibold text-emerald-700">+${gains.xpGained} XP</div>`);
+      }
+      if (gains.levelUp) {
+        rows.push(`<div class="mx-auto w-fit px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-semibold">
+          Level up! ${gains.levelUp.icon} ${esc(gains.levelUp.name)}</div>`);
+      }
+      gains.newBadges.forEach(b => rows.push(
+        `<div class="mx-auto w-fit px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 font-semibold">
+          New badge: ${b.icon} ${esc(b.name)}</div>`));
+      box.innerHTML = rows.join('');
+      box.classList.remove('hidden');
+    }
 
     function logout() {
       applyLoggedOut();
@@ -931,6 +1073,7 @@
         const json = await res.json();
         myBookings = json.data;
         bookingRules = json.rules;
+        setProgress(json.progress);
         renderSessions();
         renderProfile();
       } catch (err) {
@@ -1015,7 +1158,9 @@
         });
         const data = await res.json();
         if (res.ok) {
-          showToast(data.message);
+          const change = setProgress(data.progress);   // cancelled bookings give no XP
+          const xpText = change && change.xpGained < 0 ? ` (${change.xpGained} XP)` : '';
+          showToast(data.message + xpText);
           fetchSessions();
           fetchMyBookings();
           refreshMe();   // the cancelled booking takes its flame back
@@ -1199,10 +1344,12 @@
         if (res.ok && data.status === 'success') {
           closeBookingModal();
           setStreak(data.data);
-          showToast(`Booked: ${data.data.booking_code} · 🔥 streak ${data.data.streak}`);
+          const gains = setProgress(data.data.progress);
+          const xpText = gains && gains.xpGained > 0 ? ` · +${gains.xpGained} XP` : '';
+          showToast(`Booked: ${data.data.booking_code} · 🔥 streak ${data.data.streak}${xpText}`);
           fetchSessions();
           fetchMyBookings();
-          openTicketModal(data.data);
+          openTicketModal(data.data, gains);
         } else if (res.status === 401) {
           closeBookingModal();
           pendingSessionId = parseInt(sessionId, 10);
@@ -1221,7 +1368,8 @@
       if (s) openBookingModal(s.id);
     }
 
-    function openTicketModal(bookingData) {
+    function openTicketModal(bookingData, gains = null) {
+      renderTicketRewards(gains);
       document.getElementById('ticket-booking-code').innerText = bookingData.booking_code;
       document.getElementById('ticket-member').innerText = bookingData.member_name;
       document.getElementById('ticket-session').innerText = `${bookingData.session.session_code} - ${bookingData.session.title}`;

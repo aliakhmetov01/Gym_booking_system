@@ -242,6 +242,104 @@ def _public_user(u):
     }
 
 
+# =========================================================================
+# GAMIFICATION: LEVELS, XP AND BADGES
+# Calculated from the booking history (no extra tables), so it works the same on
+# SQLite, the serverless store and Supabase. Cancelled bookings give nothing,
+# which makes book/cancel farming useless.
+# =========================================================================
+
+XP_PER_BOOKING = 20       # every active (not cancelled) booking
+XP_PER_ATTENDANCE = 30    # bonus when the member actually came (checked in at reception)
+XP_PER_BADGE = 50         # bonus for every unlocked badge
+
+LEVELS = [
+    {"key": "rookie", "name": "Rookie", "icon": "🌱", "min_xp": 0},
+    {"key": "regular", "name": "Regular", "icon": "💪", "min_xp": 100},
+    {"key": "athlete", "name": "Athlete", "icon": "🏆", "min_xp": 300},
+]
+
+WORKOUT_CATEGORIES = ("CrossFit", "Boxing", "Strength", "Pilates", "HIIT Cardio")
+MORNING_BEFORE_HOUR = 12
+EARLY_BIRD_TARGET = 3
+STREAK_BADGE_TARGET = 5
+
+
+def _hour(time_str):
+    try:
+        return int(str(time_str).split(":")[0])
+    except (TypeError, ValueError):
+        return 99
+
+
+def _badge(badge_id, name, icon, description, value, target):
+    return {
+        "id": badge_id,
+        "name": name,
+        "icon": icon,
+        "description": description,
+        "progress": min(value, target),
+        "target": target,
+        "unlocked": value >= target,
+    }
+
+
+def compute_progress(bookings, best_streak=0):
+    """Returns XP, current level, progress to the next level and badges."""
+    active = [b for b in bookings if b.get("status") != "CANCELLED"]
+    attended = sum(1 for b in active if b.get("status") == "CHECKED_IN")
+    categories = {b.get("category") for b in active} & set(WORKOUT_CATEGORIES)
+    morning = sum(1 for b in active if _hour(b.get("session_time")) < MORNING_BEFORE_HOUR)
+
+    badges = [
+        _badge("first_workout", "First Workout", "🎯",
+               "Book your first training session.", len(active), 1),
+        _badge("on_fire", "On Fire", "🔥",
+               f"Make {STREAK_BADGE_TARGET} bookings in a row (each within 24h of the last).",
+               best_streak or 0, STREAK_BADGE_TARGET),
+        _badge("explorer", "Explorer", "🧭",
+               f"Try all {len(WORKOUT_CATEGORIES)} workout types.", len(categories), len(WORKOUT_CATEGORIES)),
+        _badge("early_bird", "Early Bird", "🌅",
+               f"Book {EARLY_BIRD_TARGET} morning sessions (before {MORNING_BEFORE_HOUR}:00).",
+               morning, EARLY_BIRD_TARGET),
+    ]
+    unlocked = sum(1 for b in badges if b["unlocked"])
+    xp = len(active) * XP_PER_BOOKING + attended * XP_PER_ATTENDANCE + unlocked * XP_PER_BADGE
+
+    idx = max(i for i, lvl in enumerate(LEVELS) if xp >= lvl["min_xp"])
+    level = LEVELS[idx]
+    nxt = LEVELS[idx + 1] if idx + 1 < len(LEVELS) else None
+    if nxt:
+        span = nxt["min_xp"] - level["min_xp"]
+        into = xp - level["min_xp"]
+        percent = round(into * 100 / span)
+    else:
+        percent = 100
+
+    return {
+        "xp": xp,
+        "level": {**level, "number": idx + 1},
+        "next_level": dict(nxt) if nxt else None,
+        "levels": [dict(lvl) for lvl in LEVELS],
+        "xp_to_next": (nxt["min_xp"] - xp) if nxt else 0,
+        "level_percent": percent,
+        "badges": badges,
+        "badges_unlocked": unlocked,
+        "stats": {"workouts": len(active), "attended": attended,
+                  "types_tried": len(categories), "morning": morning},
+        "rules": {"xp_per_booking": XP_PER_BOOKING, "xp_per_attendance": XP_PER_ATTENDANCE,
+                  "xp_per_badge": XP_PER_BADGE},
+    }
+
+
+def get_user_progress(user_id: int):
+    """Uses the active engine's get_user_by_id / get_user_bookings (SQLite, JSON or Supabase)."""
+    user = get_user_by_id(user_id)
+    if not user:
+        return None
+    return compute_progress(get_user_bookings(user_id), user.get("best_streak", 0))
+
+
 def _cancel_info(status: str, created_at: str):
     """BR-05: returns (deadline_str, can_cancel, reason) for a booking."""
     try:

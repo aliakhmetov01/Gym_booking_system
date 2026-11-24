@@ -226,7 +226,11 @@ def api_login():
 @app.route("/api/auth/me", methods=["GET"])
 @require_auth
 def api_me():
-    return jsonify({"status": "success", "data": g.user})
+    return jsonify({
+        "status": "success",
+        "data": g.user,
+        "progress": database.get_user_progress(g.user["id"]),   # level, XP, badges
+    })
 
 
 @app.route("/api/my/bookings", methods=["GET"])
@@ -238,6 +242,7 @@ def api_my_bookings():
     return jsonify({
         "status": "success",
         "data": bookings,
+        "progress": database.compute_progress(bookings, g.user.get("best_streak", 0)),
         "rules": {
             "active_count": active,
             "max_active_bookings": database.MAX_ACTIVE_BOOKINGS,
@@ -257,7 +262,11 @@ def api_cancel_booking():
     result = database.cancel_booking(code, g.user["id"])
     if not result["success"]:
         return jsonify({"status": "error", "message": result["error"]}), 400
-    return jsonify({"status": "success", "message": result["message"]})
+    return jsonify({
+        "status": "success",
+        "message": result["message"],
+        "progress": database.get_user_progress(g.user["id"]),   # cancelled booking loses its XP
+    })
 
 
 @app.route("/api/book", methods=["POST"])
@@ -273,6 +282,7 @@ def api_book_session():
     result = database.create_booking(session_id, g.user["id"])
     if not result["success"]:
         return jsonify({"status": "error", "message": result["error"]}), 400
+    result["progress"] = database.get_user_progress(g.user["id"])   # XP, level, badges after booking
 
     return jsonify({
         "status": "success",
