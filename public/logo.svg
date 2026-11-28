@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="Gym Booking">
+  <title>Gym Booking</title>
+  <!-- Mark: a calendar sheet (booking) holding a dumbbell (gym), in deep forest green -->
+  <defs>
+    <linearGradient id="gb-body" x1="10" y1="4" x2="54" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#17603e"/>
+      <stop offset="1" stop-color="#09311f"/>
+    </linearGradient>
+    <clipPath id="gb-shape">
+      <rect width="64" height="64" rx="16"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#gb-shape)">
+    <rect width="64" height="64" fill="url(#gb-body)"/>
+    <rect width="64" height="20" fill="#2f8a5d"/>
+  </g>
+  <!-- Calendar binding rings -->
+  <rect x="18" y="5" width="6" height="12" rx="3" fill="#ffffff"/>
+  <rect x="40" y="5" width="6" height="12" rx="3" fill="#ffffff"/>
+  <!-- Dumbbell -->
+  <g fill="#ffffff">
+    <rect x="11" y="35" width="6" height="14" rx="2.5"/>
+    <rect x="18" y="31" width="7" height="22" rx="3"/>
+    <rect x="25" y="39.5" width="14" height="5" rx="2"/>
+    <rect x="39" y="31" width="7" height="22" rx="3"/>
+    <rect x="47" y="35" width="6" height="14" rx="2.5"/>
+  </g>
+</svg>
